@@ -25,6 +25,7 @@
 #define JSMN_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -65,14 +66,21 @@ enum jsmnerr {
  * type		type (object, array, string etc.)
  * start	start position in JSON data string
  * end		end position in JSON data string
+ *
+ * jsonlib fork: start/end/size are 16-bit and the type is uint8_t, which
+ * keeps jsmntok_t at 8 bytes on 32-bit targets when JSMN_PARENT_LINKS is
+ * off (jsonlib does not enable it). start/end stay signed because -1 marks
+ * an unfinished token, so inputs are limited to 32767 bytes (see the guard
+ * in jsmn_parse). The type is not jsmntype_t because GCC and Clang disagree
+ * on enum width in this build.
  */
 typedef struct jsmntok {
-  jsmntype_t type;
-  int start;
-  int end;
-  int size;
+  int16_t start;
+  int16_t end;
+  int16_t size;
+  uint8_t type;
 #ifdef JSMN_PARENT_LINKS
-  int parent;
+  int16_t parent;
 #endif
 } jsmntok_t;
 
@@ -123,9 +131,9 @@ static jsmntok_t *jsmn_alloc_token(jsmn_parser *parser, jsmntok_t *tokens,
  */
 static void jsmn_fill_token(jsmntok_t *token, const jsmntype_t type,
                             const int start, const int end) {
-  token->type = type;
-  token->start = start;
-  token->end = end;
+  token->type = (uint8_t)type;
+  token->start = (int16_t)start;
+  token->end = (int16_t)end;
   token->size = 0;
 }
 
@@ -272,6 +280,12 @@ JSMN_API int jsmn_parse(jsmn_parser *parser, const char *js, const size_t len,
   jsmntok_t *token;
   int count = parser->toknext;
 
+  /* jsonlib fork: token positions are int16_t (signed because -1 is the
+   * unfinished-token sentinel), so larger inputs cannot be represented. */
+  if (len > 32767u) {
+    return JSMN_ERROR_INVAL;
+  }
+
   for (; parser->pos < len && js[parser->pos] != '\0'; parser->pos++) {
     char c;
     jsmntype_t type;
@@ -301,8 +315,8 @@ JSMN_API int jsmn_parse(jsmn_parser *parser, const char *js, const size_t len,
         token->parent = parser->toksuper;
 #endif
       }
-      token->type = (c == '{' ? JSMN_OBJECT : JSMN_ARRAY);
-      token->start = parser->pos;
+      token->type = (uint8_t)(c == '{' ? JSMN_OBJECT : JSMN_ARRAY);
+      token->start = (int16_t)parser->pos;
       parser->toksuper = parser->toknext - 1;
       break;
     case '}':
@@ -321,7 +335,7 @@ JSMN_API int jsmn_parse(jsmn_parser *parser, const char *js, const size_t len,
           if (token->type != type) {
             return JSMN_ERROR_INVAL;
           }
-          token->end = parser->pos + 1;
+          token->end = (int16_t)(parser->pos + 1);
           parser->toksuper = token->parent;
           break;
         }
@@ -341,7 +355,7 @@ JSMN_API int jsmn_parse(jsmn_parser *parser, const char *js, const size_t len,
             return JSMN_ERROR_INVAL;
           }
           parser->toksuper = -1;
-          token->end = parser->pos + 1;
+          token->end = (int16_t)(parser->pos + 1);
           break;
         }
       }

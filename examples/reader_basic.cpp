@@ -13,7 +13,7 @@
 namespace {
 
 constexpr char kFrame[] =
-  R"({"id":1,"kind":"widget","label":"Base","count":2500,"active":true,"details":{"target":12.5,"flags":[true,null,"x"]}})";
+  R"({"id":1,"kind":"widget","label":"Base","count":2500,"active":true,"details":{"target":12.5,"tags":[true,null,"x"]}})";
 
 jsonlib::Token g_tokens[48];
 
@@ -43,13 +43,13 @@ int main()
   auto details = v["details"];
 
   const float target = details["target"].Float().value_or(0.0f);
-  const bool first_flag = v["details"]["flags"][0u].Bool().value_or(false);
+  const bool first_tag = v["details"]["tags"][0u].Bool().value_or(false);
 
-  const auto kind = v["kind"].Str().value_or(std::string_view(""));
+  const auto kind = v["kind"].Str().value_or(std::string_view());
   std::printf("kind=%.*s label=%.*s count=%d active=%d target=%.2f "
-              "flag0=%d\n",
+              "tag0=%d\n",
               (int)kind.size(), kind.data(),
               (int)label->size(), label->data(), (int)count,
-              active ? 1 : 0, (double)target, first_flag ? 1 : 0);
+              active ? 1 : 0, (double)target, first_tag ? 1 : 0);
   return 0;
 }

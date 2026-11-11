@@ -2,12 +2,18 @@
 
 Small, allocation-free C++17 JSON reader/writer built on the MIT-licensed
 [jsmn](https://github.com/zserge/jsmn) tokenizer. The library is standalone: it
-does not depend on the firmware, HAL, or RTOS.
+does not depend on the firmware, HAL, RTOS, or any RADWAG-specific protocol.
 
 ## Scope
 
+- `jsonlib::JsonDoc` / `jsonlib::JsonValue` - allocation-free document facade
+  with a selectable backend (jsmn tokens, span scanner, or hybrid). Parsing is
+  strict: one root value, no trailing garbage, JSON number/literal grammar,
+  no raw control bytes in strings, and a container depth cap.
+- `jsonlib::JsonArrayCursor` / `jsonlib::JsonObjectCursor` - allocation-free
+  iteration over arrays and objects.
 - `jsonlib::JsonParser` - non-owning parser over a caller-supplied byte buffer
-  and token array.
+  and token array (legacy token API used by `JsonDoc`).
 - `jsonlib::JsonView` / `jsonlib::JsonNode` - typed, chainable read access:
   - `v["details"]["id"].Int()`
   - `v["items"][0u].Str()`
@@ -24,13 +30,51 @@ does not depend on the firmware, HAL, or RTOS.
   `JsonParseIp`, `JsonCopyStr`
 - Iteration helpers: `JsonForEachPair`, `JsonForEachElement`
 
+## Reader modes
+
+`JsonDoc::Parse` selects the backend at compile time via
+`JSONLIB_READER_MODE` (`jsonlib/config.hpp`):
+
+| Mode | Value | Backend |
+| --- | --- | --- |
+| `JSONLIB_READER_TOKEN` | 0 | jsmn token array, `JSONLIB_TOKEN_CAP` default 320 |
+| `JSONLIB_READER_SPAN` | 1 | strict linear scanner, no token pool |
+| `JSONLIB_READER_HYBRID` | 2 | jsmn with cap 128, span re-parse on `NOMEM` (default) |
+
+`JSONLIB_JSON_MAX_DEPTH` (default 8) caps container nesting in every mode.
+The vendored jsmn token is compacted to 8 bytes on 32-bit targets (16-bit
+start/end/size plus a `uint8_t` type); token modes therefore accept inputs up
+to 32767 bytes. `JSON_FRAME_MAX` in this firmware is 2048, far below that.
+`JSONLIB_ASSERT(expr)` may be defined before including the headers.
+
+All translation units must see the same mode and cap; set them globally
+(`-DJSONLIB_READER_MODE=...`) and define `JSMN_STRICT` for both `jsmn.c` and
+every C++ translation unit. In hybrid mode token exhaustion is not an error:
+the whole frame is re-parsed with the span scanner and `JsonDoc::backend()`
+reports `JsonBackend::Span` (`JsonBackend::TokenArray` after a token parse,
+`JsonBackend::None` before a successful parse).
+
+`json_doc.cpp`, `json_primitives.cpp` and `json_writer.cpp` are required in
+every mode. Backend-specific sources:
+
+- mode 0: `json_reader.cpp`, `jsmn.c`
+- mode 1: `json_span_reader.cpp` (no `json_reader.cpp`, no `jsmn.c`)
+- mode 2: all of the above
+
+`make -C libs/jsonlib test-modes` builds and runs the unit test with all three
+modes (each in its own `build/modeN` directory).
+
 ## Properties
 
 - C++17, no exceptions, no RTTI, no heap allocation.
-- Caller owns the JSON buffer and the `jsonlib::Token` array.
+- Caller owns the JSON buffer and, in token mode, the `jsonlib::Token` array
+  (`JsonDoc` keeps it as a member).
 - Token storage size is bounded by `jsmn` semantics: one token per JSON value,
-  key, object and array.
-- The library does not impose a maximum document size.
+  key, object and array. Each compact token is 8 bytes on 32-bit targets.
+- Span mode stores only offsets into the caller's buffer; the frame must stay
+  alive while a `JsonValue`/cursor is used.
+- Span mode has no input-size limit; token modes accept at most 32767 bytes
+  because jsmn positions are signed 16-bit.
 - Integer JSON values are 32-bit. Integer literals are accepted on all
   targets (including ARM, where `int32_t` is `long`); wider types require an
   explicit cast.
@@ -94,12 +138,17 @@ platform log/UART output.
 Add the include paths and compile the library sources:
 
 ```sh
-g++ -std=c++17 -Ilibs/jsonlib/include -Ilibs/jsonlib/third_party/jsmn \
-    -c libs/jsonlib/src/json_reader.cpp
-g++ -std=c++17 -Ilibs/jsonlib/include -Ilibs/jsonlib/third_party/jsmn \
-    -c libs/jsonlib/src/json_writer.cpp
-gcc -std=c17 -Ilibs/jsonlib/third_party/jsmn -c libs/jsonlib/src/jsmn.c
+g++ -std=c++17 -DJSONLIB_READER_MODE=2 -DJSMN_STRICT \
+    -Ilibs/jsonlib/include -Ilibs/jsonlib/third_party/jsmn \
+    -c libs/jsonlib/src/json_doc.cpp libs/jsonlib/src/json_primitives.cpp \
+       libs/jsonlib/src/json_reader.cpp libs/jsonlib/src/json_span_reader.cpp \
+       libs/jsonlib/src/json_writer.cpp
+gcc -std=c17 -DJSONLIB_READER_MODE=2 -DJSMN_STRICT \
+    -Ilibs/jsonlib/third_party/jsmn -c libs/jsonlib/src/jsmn.c
 ```
+
+For mode 1 (span only) drop `json_reader.cpp` and `jsmn.c`; for mode 0 drop
+`json_span_reader.cpp`. Keep the defines identical across all objects.
 
 Or build the static library and run the standalone test:
 
@@ -114,5 +163,7 @@ are required. The default is a no-op, matching embedded release builds.
 ## License
 
 `jsonlib` is released under the MIT license (see `LICENSE`). The bundled jsmn
-header keeps its own MIT license (see `THIRD_PARTY_NOTICES.md`). MIT permits
-use in closed-source/proprietary products.
+header keeps its own MIT license (see `THIRD_PARTY_NOTICES.md`) and is locally
+modified to use compact 16-bit token fields. MIT permits
+use in closed-source/proprietary products; the RADWAG-specific protocol adapter
+in `App/json` is not part of this library and is not covered by this license.

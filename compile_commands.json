@@ -1,0 +1,57 @@
+[
+    {
+        "command": "c++ -c -Iinclude -Ithird_party/jsmn -std=c++17 -O2 -Wall -Wextra -Wpedantic -o build/src/json_reader.o src/json_reader.cpp",
+        "directory": "/home/darekry/code/dyn/libs/jsonlib",
+        "file": "/home/darekry/code/dyn/libs/jsonlib/src/json_reader.cpp"
+    },
+    {
+        "command": "c++ -c -Iinclude -Ithird_party/jsmn -std=c++17 -O2 -Wall -Wextra -Wpedantic -o build/src/json_writer.o src/json_writer.cpp",
+        "directory": "/home/darekry/code/dyn/libs/jsonlib",
+        "file": "/home/darekry/code/dyn/libs/jsonlib/src/json_writer.cpp"
+    },
+    {
+        "command": "cc -c -Iinclude -Ithird_party/jsmn -O2 -Wall -Wextra -Wpedantic -o build/src/jsmn.o src/jsmn.c",
+        "directory": "/home/darekry/code/dyn/libs/jsonlib",
+        "file": "/home/darekry/code/dyn/libs/jsonlib/src/jsmn.c"
+    },
+    {
+        "command": "c++ -c -Iinclude -Ithird_party/jsmn -std=c++17 -O2 -Wall -Wextra -Wpedantic build/libjsonlib.a -o build/examples/reader_basic examples/reader_basic.cpp",
+        "directory": "/home/darekry/code/dyn/libs/jsonlib",
+        "file": "/home/darekry/code/dyn/libs/jsonlib/examples/reader_basic.cpp"
+    },
+    {
+        "command": "c++ -c -Iinclude -Ithird_party/jsmn -std=c++17 -O2 -Wall -Wextra -Wpedantic build/libjsonlib.a -o build/examples/reader_embedded_rx examples/reader_embedded_rx.cpp",
+        "directory": "/home/darekry/code/dyn/libs/jsonlib",
+        "file": "/home/darekry/code/dyn/libs/jsonlib/examples/reader_embedded_rx.cpp"
+    },
+    {
+        "command": "c++ -c -Iinclude -Ithird_party/jsmn -std=c++17 -O2 -Wall -Wextra -Wpedantic build/libjsonlib.a -o build/examples/reader_iterate examples/reader_iterate.cpp",
+        "directory": "/home/darekry/code/dyn/libs/jsonlib",
+        "file": "/home/darekry/code/dyn/libs/jsonlib/examples/reader_iterate.cpp"
+    },
+    {
+        "command": "c++ -c -Iinclude -Ithird_party/jsmn -std=c++17 -O2 -Wall -Wextra -Wpedantic build/libjsonlib.a -o build/examples/writer_basic examples/writer_basic.cpp",
+        "directory": "/home/darekry/code/dyn/libs/jsonlib",
+        "file": "/home/darekry/code/dyn/libs/jsonlib/examples/writer_basic.cpp"
+    },
+    {
+        "command": "c++ -c -Iinclude -Ithird_party/jsmn -std=c++17 -O2 -Wall -Wextra -Wpedantic build/libjsonlib.a -o build/examples/writer_cpp_buffers examples/writer_cpp_buffers.cpp",
+        "directory": "/home/darekry/code/dyn/libs/jsonlib",
+        "file": "/home/darekry/code/dyn/libs/jsonlib/examples/writer_cpp_buffers.cpp"
+    },
+    {
+        "command": "c++ -c -Iinclude -Ithird_party/jsmn -std=c++17 -O2 -Wall -Wextra -Wpedantic build/libjsonlib.a -o build/examples/writer_escape examples/writer_escape.cpp",
+        "directory": "/home/darekry/code/dyn/libs/jsonlib",
+        "file": "/home/darekry/code/dyn/libs/jsonlib/examples/writer_escape.cpp"
+    },
+    {
+        "command": "c++ -c -Iinclude -Ithird_party/jsmn -std=c++17 -O2 -Wall -Wextra -Wpedantic build/libjsonlib.a -o build/examples/writer_manual examples/writer_manual.cpp",
+        "directory": "/home/darekry/code/dyn/libs/jsonlib",
+        "file": "/home/darekry/code/dyn/libs/jsonlib/examples/writer_manual.cpp"
+    },
+    {
+        "command": "c++ -c -Iinclude -Ithird_party/jsmn -std=c++17 -O2 -Wall -Wextra -Wpedantic build/libjsonlib.a -o build/examples/writer_overflow examples/writer_overflow.cpp",
+        "directory": "/home/darekry/code/dyn/libs/jsonlib",
+        "file": "/home/darekry/code/dyn/libs/jsonlib/examples/writer_overflow.cpp"
+    }
+]

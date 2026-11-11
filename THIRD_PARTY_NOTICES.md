@@ -2,7 +2,9 @@
 
 ## jsmn
 
-`third_party/jsmn/jsmn.h` is the upstream jsmn tokenizer by Serge Zaitsev.
+`third_party/jsmn/jsmn.h` is the upstream jsmn tokenizer by Serge Zaitsev,
+locally modified to use compact 16-bit token fields (`jsmntok_t` is 8 bytes on
+32-bit targets; token-mode inputs are limited to 32767 bytes).
 
 - License: MIT
 - Copyright (c) 2010 Serge Zaitsev

@@ -23,8 +23,7 @@ void JsonBuilder::Reset(char *buf, size_t cap)
   pending_key_ = false;
   for (size_t i = 0u; i < kMaxDepth; i++)
   {
-    ctx_[i] = '\0';
-    first_[i] = true;
+    st_[i] = 0u;
   }
   if ((buf_ == nullptr) || (cap_ == 0u))
   {
@@ -41,12 +40,13 @@ void JsonBuilder::BeforeKey()
   {
     return;
   }
-  if ((depth_ == 0u) || (ctx_[depth_ - 1u] != 'O') || pending_key_)
+  if ((depth_ == 0u) || ((st_[depth_ - 1u] & kTypeMask) != 'O') ||
+      pending_key_)
   {
     ok_ = false;
     return;
   }
-  if (!first_[depth_ - 1u])
+  if ((st_[depth_ - 1u] & kFirst) == 0u)
   {
     AppendChar(',');
     if (!ok_)
@@ -74,12 +74,12 @@ void JsonBuilder::BeforeValue()
     }
     return;
   }
-  if (ctx_[depth_ - 1u] != 'A')
+  if ((st_[depth_ - 1u] & kTypeMask) != 'A')
   {
     ok_ = false;
     return;
   }
-  if (!first_[depth_ - 1u])
+  if ((st_[depth_ - 1u] & kFirst) == 0u)
   {
     AppendChar(',');
   }
@@ -96,13 +96,13 @@ void JsonBuilder::AfterValue()
     pending_key_ = false;
     if (depth_ > 0u)
     {
-      first_[depth_ - 1u] = false;
+      st_[depth_ - 1u] &= (uint8_t)~kFirst;
     }
     return;
   }
   if (depth_ > 0u)
   {
-    first_[depth_ - 1u] = false;
+    st_[depth_ - 1u] &= (uint8_t)~kFirst;
   }
 }
 
@@ -196,15 +196,14 @@ JsonBuilder &JsonBuilder::BeginObject()
   {
     return *this;
   }
-  ctx_[depth_] = 'O';
-  first_[depth_] = true;
+  st_[depth_] = (uint8_t)('O' | kFirst);
   depth_++;
   if (had_key)
   {
     pending_key_ = false;
     if (parent > 0u)
     {
-      first_[parent - 1u] = false;
+      st_[parent - 1u] &= (uint8_t)~kFirst;
     }
   }
   return *this;
@@ -212,7 +211,7 @@ JsonBuilder &JsonBuilder::BeginObject()
 
 JsonBuilder &JsonBuilder::EndObject()
 {
-  if (!ok_ || (depth_ == 0u) || (ctx_[depth_ - 1u] != 'O') ||
+  if (!ok_ || (depth_ == 0u) || ((st_[depth_ - 1u] & kTypeMask) != 'O') ||
       pending_key_)
   {
     ok_ = false;
@@ -247,15 +246,14 @@ JsonBuilder &JsonBuilder::BeginArray()
   {
     return *this;
   }
-  ctx_[depth_] = 'A';
-  first_[depth_] = true;
+  st_[depth_] = (uint8_t)('A' | kFirst);
   depth_++;
   if (had_key)
   {
     pending_key_ = false;
     if (parent > 0u)
     {
-      first_[parent - 1u] = false;
+      st_[parent - 1u] &= (uint8_t)~kFirst;
     }
   }
   return *this;
@@ -263,7 +261,7 @@ JsonBuilder &JsonBuilder::BeginArray()
 
 JsonBuilder &JsonBuilder::EndArray()
 {
-  if (!ok_ || (depth_ == 0u) || (ctx_[depth_ - 1u] != 'A') ||
+  if (!ok_ || (depth_ == 0u) || ((st_[depth_ - 1u] & kTypeMask) != 'A') ||
       pending_key_)
   {
     ok_ = false;
@@ -390,6 +388,7 @@ JsonBuilder &JsonBuilder::Val(bool val)
   return *this;
 }
 
+#if !JSONLIB_NO_FLOAT
 JsonBuilder &JsonBuilder::Val(float val)
 {
   BeforeValue();
@@ -436,6 +435,7 @@ JsonBuilder &JsonBuilder::Val(double val)
   AfterValue();
   return *this;
 }
+#endif
 
 JsonBuilder &JsonBuilder::Null()
 {
@@ -538,6 +538,7 @@ JsonBuilder &JsonBuilder::Pair(const char *key, bool val)
   return Pair(std::string_view(key, strlen(key)), val);
 }
 
+#if !JSONLIB_NO_FLOAT
 JsonBuilder &JsonBuilder::Pair(std::string_view key, float val)
 {
   Key(key);
@@ -563,6 +564,7 @@ JsonBuilder &JsonBuilder::Pair(const char *key, double val)
   JSONLIB_ASSERT(key != nullptr);
   return Pair(std::string_view(key, strlen(key)), val);
 }
+#endif
 
 void JsonBuilder::Fail()
 {
@@ -616,6 +618,7 @@ JsonBuilder::KeyRef &JsonBuilder::KeyRef::operator=(bool val)
   return *this;
 }
 
+#if !JSONLIB_NO_FLOAT
 JsonBuilder::KeyRef &JsonBuilder::KeyRef::operator=(float val)
 {
   builder_->Pair(key_, val);
@@ -627,6 +630,7 @@ JsonBuilder::KeyRef &JsonBuilder::KeyRef::operator=(double val)
   builder_->Pair(key_, val);
   return *this;
 }
+#endif
 
 JsonBuilder::KeyRef &JsonBuilder::KeyRef::Null()
 {

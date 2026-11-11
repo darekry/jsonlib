@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 //
 // Reader example: iterate over an array of record objects without
-// allocation. Both iteration helpers return a token index, so the caller
-// decides which fields are copied or applied to the device state.
+// allocation. Cursors walk the document sequentially, which is the only
+// efficient access pattern in span mode (indexed access re-scans).
 #include "jsonlib/json.hpp"
 
 #include <cstdio>
@@ -13,21 +13,18 @@ namespace {
 constexpr char kFrame[] =
   R"({"entries":[{"name":"alpha","value":1200},{"name":"beta","value":500},{"name":"gamma","value":"Z"},{"name":"delta","value":null}]})";
 
-jsonlib::Token g_tokens[64];
-
 }
 
 int main()
 {
-  jsonlib::JsonParser parser;
-  if (!parser.Parse(kFrame, sizeof(kFrame) - 1u, g_tokens, 64))
+  jsonlib::JsonDoc doc;
+  if (!doc.Parse(kFrame, sizeof(kFrame) - 1u))
   {
-    std::printf("parse failed: %d\n", (int)parser.error());
+    std::printf("parse failed: %d\n", (int)doc.error());
     return 1;
   }
 
-  jsonlib::JsonView v = parser.View();
- auto  entries = v["entries"];
+  jsonlib::JsonValue entries = doc.root()["entries"];
   if (!entries.IsArray())
   {
     std::printf("entries is not an array\n");
@@ -38,48 +35,43 @@ int main()
   size_t strings = 0u;
   size_t skipped = 0u;
 
-  jsonlib::JsonForEachElement(v, entries.Tok(),
-                              [&](int elem_tok)
-                              {
-                                jsonlib::JsonNode item = v.At(elem_tok);
-                                if (!item.IsObject())
-                                {
-                                  skipped++;
-                                  return true;
-                                }
+  jsonlib::JsonArrayCursor array(entries);
+  jsonlib::JsonValue item;
+  while (array.Next(item))
+  {
+    if (!item.IsObject())
+    {
+      skipped++;
+      continue;
+    }
 
-                                jsonlib::JsonForEachPair(v, item.Tok(),
-                                                         [&](std::string_view key,
-                                                             int val_tok)
-                                                         {
-                                                           jsonlib::JsonNode value =
-                                                             v.At(val_tok);
-                                                           if (key != "value")
-                                                           {
-                                                             return true;
-                                                           }
-                                                           if (!value.Exists() ||
-                                                               value.IsNull())
-                                                           {
-                                                             skipped++;
-                                                             return true;
-                                                           }
-                                                           if (value.Int())
-                                                           {
-                                                             numbers++;
-                                                           }
-                                                           else if (value.Str())
-                                                           {
-                                                             strings++;
-                                                           }
-                                                           else
-                                                           {
-                                                             skipped++;
-                                                           }
-                                                           return true;
-                                                         });
-                                return true;
-                              });
+    jsonlib::JsonObjectCursor members(item);
+    std::string_view key;
+    jsonlib::JsonValue value;
+    while (members.Next(key, value))
+    {
+      if (key != "value")
+      {
+        continue;
+      }
+      if (!value.Exists() || value.IsNull())
+      {
+        skipped++;
+      }
+      else if (value.Int())
+      {
+        numbers++;
+      }
+      else if (value.Str())
+      {
+        strings++;
+      }
+      else
+      {
+        skipped++;
+      }
+    }
+  }
 
   std::printf("numbers=%zu strings=%zu skipped=%zu\n", numbers, strings,
               skipped);

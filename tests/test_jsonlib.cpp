@@ -21,151 +21,6 @@ using jsonlib::JsonValue;
 static_assert(sizeof(jsonlib::Token) == 8u,
               "compact jsmn token expected (JSMN_PARENT_LINKS unsupported)");
 
-void TestReader()
-{
-  static constexpr char kJson[] =
-    R"({"title":"Widget","id":1,"details":{"label":"A1","weight":12.5,"host":"10.0.0.1","tags":[true,null,"x"],"note":null}})";
-
-  jsonlib::Token tokens[64];
-  jsonlib::JsonParser parser;
-  assert(parser.Parse(kJson, sizeof(kJson) - 1u, tokens, 64));
-  assert(parser.ok());
-  assert(parser.TokenCount() > 0);
-  assert(parser.error() == jsonlib::JsonParseError::None);
-
-  jsonlib::JsonView v = parser.View();
-  assert(v.valid());
-  assert(v["title"].Str().value() == "Widget");
-  assert(v["id"].Int().value() == 1);
-  assert(v["title"] == "Widget");
-  assert(v["title"] != "Gadget");
-  assert(v["details"]["label"].Str().value() == "A1");
-  assert(v["details"]["weight"].Float().value() == 12.5f);
-  assert(v["details"]["tags"][0u].Bool().value());
-  assert(v["details"]["tags"][1u].IsNull());
-  assert(!v["details"]["tags"][1u]);
-  assert(v["details"]["tags"][2u].Str().value() == "x");
-  assert(v["details"]["note"].IsNull());
-  assert(!v["details"]["note"]);
-  assert(!v["details"]["missing"].Exists());
-  assert(v["details"].Count() == 5u);
-
-  uint8_t ip[4] = { 0u, 0u, 0u, 0u };
-  assert(v["details"]["host"].Ip(ip));
-  assert((ip[0] == 10u) && (ip[1] == 0u) && (ip[2] == 0u) && (ip[3] == 1u));
-
-  size_t pairs = 0u;
-  jsonlib::JsonForEachPair(v, v["details"].Tok(),
-                           [&](std::string_view, int)
-                           {
-                             pairs++;
-                             return true;
-                           });
-  assert(pairs == 5u);
-
-  size_t elements = 0u;
-  jsonlib::JsonForEachElement(v, v["details"]["tags"].Tok(),
-                              [&](int)
-                              {
-                                elements++;
-                                return true;
-                              });
-  assert(elements == 3u);
-}
-
-void TestParserErrors()
-{
-  jsonlib::Token one[1];
-  jsonlib::JsonParser parser;
-  assert(!parser.Parse("{\"a\":1}", 7u, one, 1));
-  assert(parser.error() == jsonlib::JsonParseError::NoMemory);
-
-  jsonlib::Token many[16];
-  assert(parser.Parse("{\"a\":1}", 7u, many, 16));
-  assert(parser.TokenCount() == 3);
-}
-
-void TestPrimitives()
-{
-  int32_t i = 0;
-  assert(jsonlib::JsonParseInt("123", i) && (i == 123));
-  assert(!jsonlib::JsonParseInt("12x", i));
-
-  float f = 0.0f;
-  assert(jsonlib::JsonParseFloat("1.25", f) && (f == 1.25f));
-  assert(!jsonlib::JsonParseFloat("", f));
-
-  bool b = false;
-  assert(jsonlib::JsonParseBool("true", b) && b);
-  assert(jsonlib::JsonParseBool("false", b) && !b);
-  assert(!jsonlib::JsonParseBool("1", b));
-
-  uint8_t ip[4] = { 0u, 0u, 0u, 0u };
-  assert(jsonlib::JsonParseIp("192.168.0.1", ip));
-  assert((ip[0] == 192u) && (ip[1] == 168u) && (ip[2] == 0u) && (ip[3] == 1u));
-  assert(!jsonlib::JsonParseIp("192.168.0", ip));
-
-  char dst[4];
-  jsonlib::JsonCopyStr(dst, sizeof(dst), "abcdef");
-  assert(strcmp(dst, "abc") == 0);
-}
-
-void TestWriter()
-{
-  char buf[256];
-  jsonlib::JsonBuilder b(buf, sizeof(buf));
-  {
-    auto root = b.Object();
-    root["title"] = "Report";
-    root["revision"] = 1;
-    root["active"] = true;
-    root["ratio"] = 1.5f;
-    root["extra"].Null();
-    {
-      auto items = root["items"].Array();
-      {
-        auto item = items.Object();
-        item["name"] = "A";
-      }
-      {
-        auto item = items.Object();
-        item["name"] = "B";
-      }
-    }
-    {
-      auto meta = root["meta"].Object();
-      meta["x"] = 2;
-    }
-  }
-
-  assert(b.ok());
-  assert(strcmp(b.c_str(),
-                "{\"title\":\"Report\",\"revision\":1,\"active\":true,"
-                "\"ratio\":1.5,\"extra\":null,\"items\":[{\"name\":\"A\"},"
-                "{\"name\":\"B\"}],\"meta\":{\"x\":2}}") == 0);
-}
-
-void TestWriterEscaping()
-{
-  char buf[64];
-  jsonlib::JsonBuilder b(buf, sizeof(buf));
-  b.BeginObject();
-  b["S"] = std::string_view("a\"b\n");
-  b.EndObject();
-  assert(b.ok());
-  assert(strcmp(b.c_str(), "{\"S\":\"a\\\"b\\n\"}") == 0);
-}
-
-void TestWriterOverflow()
-{
-  char buf[4];
-  jsonlib::JsonBuilder b(buf, sizeof(buf));
-  b.BeginObject();
-  b["Key"] = "value";
-  b.EndObject();
-  assert(!b.ok());
-}
-
 void TestDocReader()
 {
   static constexpr char kJson[] =
@@ -190,7 +45,9 @@ void TestDocReader()
   assert(v["title"] == "Widget");
   assert(v["title"] != "Gadget");
   assert(v["details"]["label"].Str().value() == "A1");
+#if !JSONLIB_NO_FLOAT
   assert(v["details"]["weight"].Float().value() == 12.5f);
+#endif
   assert(v["details"]["tags"][0u].Bool().value());
   assert(v["details"]["tags"][1u].IsNull());
   assert(!v["details"]["tags"][1u]);
@@ -230,6 +87,214 @@ void TestDocReader()
   assert(second.root()["a"].Count() == 0u);
 }
 
+void TestDocParseErrors()
+{
+  // Regresja: pusty / bialy input to Syntax, nigdy sukces z count 0.
+  JsonDoc empty;
+  assert(!empty.Parse("", 0u));
+  assert(empty.error() == JsonReadError::Syntax);
+
+  JsonDoc blank;
+  assert(!blank.Parse("   ", 3u));
+  assert(blank.error() != JsonReadError::None);
+  assert(blank.error() != JsonReadError::NoMemory);
+
+  JsonDoc nullp;
+  assert(!nullp.Parse(nullptr, 4u));
+  assert(nullp.error() == JsonReadError::Syntax);
+
+  // Za mala pula tokenow w trybie TOKEN to twardy NoMemory.
+  std::string big = R"({"kind":"catalog","entries":[)";
+  for (int i = 0; i < 100; i++)
+  {
+    if (i != 0)
+    {
+      big += ',';
+    }
+    big += R"({"name":"item","group":"general","count":60})";
+  }
+  big += "]}";
+
+  JsonDoc doc;
+  const bool parsed = doc.Parse(big.data(), big.size());
+#if JSONLIB_READER_MODE == JSONLIB_READER_TOKEN
+  assert(!parsed);
+  assert(doc.error() == JsonReadError::NoMemory);
+#else
+  assert(parsed);
+#endif
+}
+
+void TestEmptyContainers()
+{
+  // Puste kontenery: zero elementow, kursory milcza, indeksy nie istnieja.
+  // (Regresja: legacy JsonForEachElement wolal fn raz z bogus-tokenem.)
+  static constexpr const char *kCases[] = {
+    "[]", "{}", "{\"a\":[]}", "{\"a\":{}}", "[[],{}]", "[{},[]]",
+    "{\"e\":[],\"f\":{}}",
+  };
+
+  for (const char *text : kCases)
+  {
+    JsonDoc doc;
+    assert(doc.Parse(text, strlen(text)));
+    JsonValue v = doc.root();
+    if (v.IsArray())
+    {
+      JsonArrayCursor cursor(v);
+      JsonValue out;
+      size_t n = 0u;
+      while (cursor.Next(out))
+      {
+        assert(out.Exists());
+        n++;
+      }
+      assert(n == v.Count());
+      if (v.Count() == 0u)
+      {
+        assert(!v[0u].Exists());
+      }
+    }
+    if (v.IsObject())
+    {
+      JsonObjectCursor cursor(v);
+      std::string_view key;
+      JsonValue out;
+      size_t n = 0u;
+      while (cursor.Next(key, out))
+      {
+        assert(out.Exists());
+        assert(!key.empty());
+        n++;
+      }
+      assert(n == v.Count());
+    }
+  }
+
+  JsonDoc arr;
+  assert(arr.Parse("[]", 2u));
+  assert(arr.root().IsArray());
+  assert(arr.root().Count() == 0u);
+  assert(!arr.root()[0u].Exists());
+  {
+    JsonArrayCursor c(arr.root());
+    JsonValue out;
+    assert(!c.Next(out));
+  }
+
+  JsonDoc obj;
+  assert(obj.Parse("{}", 2u));
+  assert(obj.root().IsObject());
+  assert(obj.root().Count() == 0u);
+  assert(!obj.root()["a"].Exists());
+  {
+    JsonObjectCursor c(obj.root());
+    std::string_view key;
+    JsonValue out;
+    assert(!c.Next(key, out));
+  }
+
+  static constexpr char kNested[] = "{\"a\":[],\"b\":{}}";
+  JsonDoc nested;
+  assert(nested.Parse(kNested, sizeof(kNested) - 1u));
+  assert(nested.root()["a"].Count() == 0u);
+  assert(nested.root()["b"].Count() == 0u);
+  assert(!nested.root()["a"][0u].Exists());
+  assert(!nested.root()["b"]["x"].Exists());
+}
+
+void TestPrimitives()
+{
+  int32_t i = 0;
+  assert(jsonlib::JsonParseInt("123", i) && (i == 123));
+  assert(!jsonlib::JsonParseInt("12x", i));
+
+#if !JSONLIB_NO_FLOAT
+  float f = 0.0f;
+  assert(jsonlib::JsonParseFloat("1.25", f) && (f == 1.25f));
+  assert(!jsonlib::JsonParseFloat("", f));
+#endif
+
+  bool b = false;
+  assert(jsonlib::JsonParseBool("true", b) && b);
+  assert(jsonlib::JsonParseBool("false", b) && !b);
+  assert(!jsonlib::JsonParseBool("1", b));
+
+  uint8_t ip[4] = { 0u, 0u, 0u, 0u };
+  assert(jsonlib::JsonParseIp("192.168.0.1", ip));
+  assert((ip[0] == 192u) && (ip[1] == 168u) && (ip[2] == 0u) && (ip[3] == 1u));
+  assert(!jsonlib::JsonParseIp("192.168.0", ip));
+
+  char dst[4];
+  jsonlib::JsonCopyStr(dst, sizeof(dst), "abcdef");
+  assert(strcmp(dst, "abc") == 0);
+}
+
+void TestWriter()
+{
+  char buf[256];
+  jsonlib::JsonBuilder b(buf, sizeof(buf));
+  {
+    auto root = b.Object();
+    root["title"] = "Report";
+    root["revision"] = 1;
+    root["active"] = true;
+#if !JSONLIB_NO_FLOAT
+    root["ratio"] = 1.5f;
+#endif
+    root["extra"].Null();
+    {
+      auto items = root["items"].Array();
+      {
+        auto item = items.Object();
+        item["name"] = "A";
+      }
+      {
+        auto item = items.Object();
+        item["name"] = "B";
+      }
+    }
+    {
+      auto meta = root["meta"].Object();
+      meta["x"] = 2;
+    }
+  }
+
+  assert(b.ok());
+#if !JSONLIB_NO_FLOAT
+  assert(strcmp(b.c_str(),
+                "{\"title\":\"Report\",\"revision\":1,\"active\":true,"
+                "\"ratio\":1.5,\"extra\":null,\"items\":[{\"name\":\"A\"},"
+                "{\"name\":\"B\"}],\"meta\":{\"x\":2}}") == 0);
+#else
+  assert(strcmp(b.c_str(),
+                "{\"title\":\"Report\",\"revision\":1,\"active\":true,"
+                "\"extra\":null,\"items\":[{\"name\":\"A\"},"
+                "{\"name\":\"B\"}],\"meta\":{\"x\":2}}") == 0);
+#endif
+}
+
+void TestWriterEscaping()
+{
+  char buf[64];
+  jsonlib::JsonBuilder b(buf, sizeof(buf));
+  b.BeginObject();
+  b["S"] = std::string_view("a\"b\n");
+  b.EndObject();
+  assert(b.ok());
+  assert(strcmp(b.c_str(), "{\"S\":\"a\\\"b\\n\"}") == 0);
+}
+
+void TestWriterOverflow()
+{
+  char buf[4];
+  jsonlib::JsonBuilder b(buf, sizeof(buf));
+  b.BeginObject();
+  b["Key"] = "value";
+  b.EndObject();
+  assert(!b.ok());
+}
+
 void TestDocRawSpans()
 {
   static constexpr char kJson[] =
@@ -243,7 +308,9 @@ void TestDocRawSpans()
   assert(v["O"].Raw() == "{\"K\":1}");
   assert(v["A"].Raw() == "[1,2]");
   assert(v["P"].Raw() == "-12.5e+2");
+#if !JSONLIB_NO_FLOAT
   assert(v["P"].Float().value() == -1250.0f);
+#endif
 }
 
 void TestDocDuplicateKeysFirstWins()
@@ -395,6 +462,119 @@ void TestHybridTokenCap()
   assert(doc.root()["entries"].Count() == 16u);
 }
 
+namespace {
+
+std::string MakeCatalogFrame(int entries)
+{
+  std::string s = R"({"dev":"ctrl-01","seq":12345,"entries":[)";
+  for (int i = 0; i < entries; i++)
+  {
+    if (i != 0)
+    {
+      s += ',';
+    }
+    s += R"({"name":"sensor-013","group":"general","count":60,"scale":1.5,"en":true})";
+  }
+  s += R"(],"note":null})";
+  return s;
+}
+
+}
+
+void TestFrames2k4k()
+{
+  // Ramka ~2.4 KB (32 wpisy, ~361 tokenow): miesci sie w cap TOKENA.
+  std::string f2 = MakeCatalogFrame(32);
+  assert((f2.size() > 2048u) && (f2.size() < 3072u));
+
+  JsonDoc d2;
+  assert(d2.Parse(f2.data(), f2.size()));
+#if JSONLIB_READER_MODE == JSONLIB_READER_SPAN
+  assert(d2.backend() == JsonBackend::Span);
+#else
+  assert(d2.backend() == JsonBackend::TokenArray);
+  assert(d2.token_count() <= JSONLIB_TOKEN_CAP);
+#endif
+  {
+    JsonValue entries = d2.root()["entries"];
+    assert(entries.IsArray() && (entries.Count() == 32u));
+    size_t n = 0u;
+    JsonArrayCursor cursor(entries);
+    JsonValue item;
+    while (cursor.Next(item))
+    {
+      assert(item["name"] == "sensor-013");
+      assert(item["count"].Int().value_or(-1) == 60);
+      n++;
+    }
+    assert(n == 32u);
+    assert(entries[31u]["group"].Str().value() == "general");
+    assert(!entries[32u].Exists());
+  }
+
+  // Ramka ~4.7 KB (64 wpisy, ~713 tokenow): powyzej capa TOKENA.
+  std::string f4 = MakeCatalogFrame(64);
+  assert((f4.size() > 4096u) && (f4.size() < 5632u));
+
+  JsonDoc d4;
+  const bool ok4 = d4.Parse(f4.data(), f4.size());
+#if JSONLIB_READER_MODE == JSONLIB_READER_TOKEN
+  assert(!ok4);
+  assert(d4.error() == JsonReadError::NoMemory);
+#else
+  assert(ok4);
+  assert(d4.backend() == JsonBackend::Span);
+  JsonValue entries = d4.root()["entries"];
+  assert(entries.IsArray() && (entries.Count() == 64u));
+  size_t n = 0u;
+  JsonArrayCursor cursor(entries);
+  JsonValue item;
+  while (cursor.Next(item))
+  {
+    n++;
+  }
+  assert(n == 64u);
+  assert(entries[63u]["count"].Int().value_or(-1) == 60);
+#endif
+}
+
+void TestRoundTrip4k()
+{
+  // TX ~3.5 KB w statycznym buforze + re-parse (sciezka RX).
+  static char tx[4096];
+  {
+    jsonlib::JsonBuilder b(tx, sizeof(tx));
+    {
+      auto root = b.Object();
+      root["dev"] = "ctrl-01";
+      root["seq"] = 12345;
+      {
+        auto arr = root["entries"].Array();
+        for (int i = 0; i < 48; i++)
+        {
+          auto o = arr.Object();
+          o["name"] = "sensor-013";
+          o["count"] = 60;
+#if !JSONLIB_NO_FLOAT
+          o["scale"] = 1.5f;
+#endif
+          o["en"] = true;
+        }
+      }
+      root["note"].Null();
+    }
+    assert(b.ok());
+    assert((b.len() > 2048u) && (b.len() < sizeof(tx)));
+  }
+
+  JsonDoc doc;
+  assert(doc.Parse(tx, strlen(tx)));
+  JsonValue entries = doc.root()["entries"];
+  assert(entries.IsArray() && (entries.Count() == 48u));
+  assert(entries[47u]["name"].Str().value() == "sensor-013");
+  assert(doc.root()["seq"].Int().value_or(-1) == 12345);
+}
+
 void TestTokenInputLimit()
 {
 #if JSONLIB_READER_MODE != JSONLIB_READER_SPAN
@@ -457,16 +637,18 @@ void TestCppBuffers()
 
 int main()
 {
-  TestReader();
-  TestParserErrors();
-  TestPrimitives();
   TestDocReader();
+  TestDocParseErrors();
+  TestEmptyContainers();
+  TestPrimitives();
   TestDocRawSpans();
   TestDocDuplicateKeysFirstWins();
   TestDocAccepts();
   TestDocRejects();
   TestHybridFallback();
   TestHybridTokenCap();
+  TestFrames2k4k();
+  TestRoundTrip4k();
   TestTokenInputLimit();
   TestDocErrorKinds();
   TestWriter();

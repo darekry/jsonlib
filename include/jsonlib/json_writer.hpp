@@ -9,6 +9,8 @@
 #include <type_traits>
 #include <utility>
 
+#include "jsonlib/config.hpp"
+
 namespace jsonlib {
 
 namespace detail {
@@ -39,7 +41,7 @@ public:
   class ObjectScope;
   class ArrayScope;
 
-  static constexpr size_t kMaxDepth = 8u;
+  static constexpr size_t kMaxDepth = JSONLIB_JSON_MAX_DEPTH;
 
   JsonBuilder(char *buf, size_t cap);
 
@@ -78,8 +80,15 @@ public:
   JsonBuilder &Val(int32_t val);
   JsonBuilder &Val(uint32_t val);
   JsonBuilder &Val(bool val);
+#if !JSONLIB_NO_FLOAT
   JsonBuilder &Val(float val);
   JsonBuilder &Val(double val);
+#else
+  /* NO_FLOAT: floaty celowo skasowane - czytelny blad kompilacji
+   * zamiast cichego +3.5 KB flash (snprintf %g). */
+  JsonBuilder &Val(float) = delete;
+  JsonBuilder &Val(double) = delete;
+#endif
 
   /* int literals are int, which is not necessarily int32_t (on ARM GCC
    * int32_t is long). This template gives them an exact match instead of
@@ -120,10 +129,17 @@ public:
   JsonBuilder &Pair(const char *key, uint32_t val);
   JsonBuilder &Pair(std::string_view key, bool val);
   JsonBuilder &Pair(const char *key, bool val);
+#if !JSONLIB_NO_FLOAT
   JsonBuilder &Pair(std::string_view key, float val);
   JsonBuilder &Pair(const char *key, float val);
   JsonBuilder &Pair(std::string_view key, double val);
   JsonBuilder &Pair(const char *key, double val);
+#else
+  JsonBuilder &Pair(std::string_view key, float) = delete;
+  JsonBuilder &Pair(std::string_view key, double) = delete;
+  JsonBuilder &Pair(const char *key, float) = delete;
+  JsonBuilder &Pair(const char *key, double) = delete;
+#endif
 
   template <typename T,
             typename =
@@ -165,15 +181,19 @@ private:
   void AppendRaw(const char *p, size_t n);
   void AppendQuoted(std::string_view s);
 
+  static constexpr uint8_t kFirst = 0x80u;
+  static constexpr uint8_t kTypeMask = 0x7Fu;
+
   char *buf_;
   size_t cap_;
   size_t len_;
-  bool ok_;
 
-  char ctx_[kMaxDepth];
-  bool first_[kMaxDepth];
+  /* Stan poziomu w JEDNYM bajcie: bit 7 = pierwszy element,
+   * bity 0-6 = 'O' (obiekt) / 'A' (tablica). 8 B zamiast 16 B. */
+  uint8_t st_[kMaxDepth];
   uint8_t depth_;
   bool pending_key_;
+  bool ok_;
 };
 
 class JsonBuilder::KeyRef
@@ -193,8 +213,13 @@ public:
   KeyRef &operator=(int32_t val);
   KeyRef &operator=(uint32_t val);
   KeyRef &operator=(bool val);
+#if !JSONLIB_NO_FLOAT
   KeyRef &operator=(float val);
   KeyRef &operator=(double val);
+#else
+  KeyRef &operator=(float) = delete;
+  KeyRef &operator=(double) = delete;
+#endif
 
   template <typename T,
             typename =std::enable_if_t<std::is_integral_v<T> &&!std::is_same_v<T, bool>>>

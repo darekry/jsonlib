@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 //
 // Reader example: a UART/DMA receive buffer is parsed without copying or
-// null-terminating it. The token array is static and sized for the worst-case
-// frame; if it is too small, the parser reports NoMemory instead of writing
-// past the pool.
+// null-terminating it. JsonDoc keeps a static token pool sized for the
+// worst-case frame; if it is too small, Parse reports NoMemory (token mode)
+// or falls back to the span scanner (hybrid) instead of writing past the pool.
 #include "jsonlib/json.hpp"
 
 #include <cstdio>
@@ -14,7 +14,6 @@ namespace {
 constexpr size_t kRxCap = 128u;
 
 uint8_t g_rx[kRxCap];
-jsonlib::Token g_tokens[24];
 
 }
 
@@ -26,21 +25,21 @@ int main()
 
   std::memcpy(g_rx, kFrame, frame_len);
 
-  jsonlib::JsonParser parser;
-  if (!parser.Parse((const char *)g_rx, frame_len, g_tokens, 24))
+  jsonlib::JsonDoc doc;
+  if (!doc.Parse((const char *)g_rx, frame_len))
   {
-    if (parser.error() == jsonlib::JsonParseError::NoMemory)
+    if (doc.error() == jsonlib::JsonReadError::NoMemory)
     {
       std::printf("token pool too small\n");
     }
     else
     {
-      std::printf("invalid frame: %d\n", (int)parser.error());
+      std::printf("invalid frame: %d\n", (int)doc.error());
     }
     return 1;
   }
 
-  jsonlib::JsonView v = parser.View();
+  jsonlib::JsonValue v = doc.root();
 
   char status[24];
   jsonlib::JsonCopyStr(status, sizeof(status), v["status"].Str().value_or(""));
@@ -51,7 +50,7 @@ int main()
   const bool note_is_null = v["payload"]["note"].IsNull();
 
   std::printf("tokens=%d status=%s id=%d temperature=%d ready=%d note_null=%d\n",
-              parser.TokenCount(), status, id, temperature, ready ? 1 : 0,
+              doc.token_count(), status, id, temperature, ready ? 1 : 0,
               note_is_null ? 1 : 0);
   return 0;
 }

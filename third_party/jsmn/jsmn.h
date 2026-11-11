@@ -148,7 +148,10 @@ static int jsmn_parse_primitive(jsmn_parser *parser, const char *js,
 
   start = parser->pos;
 
-  for (; parser->pos < len && js[parser->pos] != '\0'; parser->pos++) {
+  /* Bufory sa length-delimited (DMA/UART) i moga zawierac NUL w srodku;
+   * wylacznie len wyznacza koniec. NUL w prymitywie i tak odrzuci
+   * walidacja gramatyki liczby/literału w jsonlib. */
+  for (; parser->pos < len; parser->pos++) {
     switch (js[parser->pos]) {
 #ifndef JSMN_STRICT
     /* In strict mode primitive must be followed by "," or "}" or "]" */
@@ -207,8 +210,9 @@ static int jsmn_parse_string(jsmn_parser *parser, const char *js,
   
   /* Skip starting quote */
   parser->pos++;
-  
-  for (; parser->pos < len && js[parser->pos] != '\0'; parser->pos++) {
+
+  /* length-delimited: NUL w stringu i tak odrzuci kontrola <0x20 w jsonlib */
+  for (; parser->pos < len; parser->pos++) {
     char c = js[parser->pos];
 
     /* Quote: end of string */
@@ -246,7 +250,7 @@ static int jsmn_parse_string(jsmn_parser *parser, const char *js,
       /* Allows escaped symbol \uXXXX */
       case 'u':
         parser->pos++;
-        for (i = 0; i < 4 && parser->pos < len && js[parser->pos] != '\0';
+        for (i = 0; i < 4 && parser->pos < len;
              i++) {
           /* If it isn't a hex character we have an error */
           if ((js[parser->pos] < 48 || js[parser->pos] > 57) &&   /* 0-9 */
@@ -286,7 +290,7 @@ JSMN_API int jsmn_parse(jsmn_parser *parser, const char *js, const size_t len,
     return JSMN_ERROR_INVAL;
   }
 
-  for (; parser->pos < len && js[parser->pos] != '\0'; parser->pos++) {
+  for (; parser->pos < len; parser->pos++) {
     char c;
     jsmntype_t type;
 

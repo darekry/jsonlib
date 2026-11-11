@@ -41,7 +41,10 @@ bool ValidateTokens(const char *json, size_t len, const Token *tokens,
     return false;
   }
 
-  int stack[JSONLIB_JSON_MAX_DEPTH + 1] = {};
+  /* Pozycje koncow otwartych kontenerow; czytane tylko po zapisie
+   * (guard top > 0), wiec bez kosztownego zerowania. int16_t, bo tokeny
+   * i tak nie siegaja dalej niz 32767. */
+  int16_t stack[JSONLIB_JSON_MAX_DEPTH + 1];
   int top = 0;
   for (int i = 0; i < count; i++)
   {
@@ -99,6 +102,9 @@ bool JsonDoc::Parse(const char *json, size_t len)
   error_ = JsonReadError::None;
   backend_ = JsonBackend::None;
   token_count_ = 0;
+#if JSONLIB_READER_MODE != JSONLIB_READER_SPAN
+  buf_ = nullptr;
+#endif
 
   if (json == nullptr)
   {
@@ -108,21 +114,21 @@ bool JsonDoc::Parse(const char *json, size_t len)
 
 #if JSONLIB_READER_MODE != JSONLIB_READER_SPAN
   {
-    JsonParser parser;
-    if (parser.Parse(json, len, tokens_, JSONLIB_TOKEN_CAP))
+    const int n = JsonParseTokens(json, len, tokens_, JSONLIB_TOKEN_CAP);
+    if (n > 0)
     {
-      token_count_ = parser.TokenCount();
       JsonReadError verr = JsonReadError::None;
-      if (!ValidateTokens(json, len, tokens_, token_count_, verr))
+      if (!ValidateTokens(json, len, tokens_, n, verr))
       {
         error_ = verr;
         return false;
       }
-      view_ = parser.View();
+      token_count_ = n;
+      buf_ = json;
       backend_ = JsonBackend::TokenArray;
       return true;
     }
-    if (parser.error() == JsonParseError::NoMemory)
+    if (n == JSMN_ERROR_NOMEM)
     {
 #if JSONLIB_READER_MODE == JSONLIB_READER_HYBRID
       JsonReadError serr = JsonReadError::None;
@@ -140,9 +146,8 @@ bool JsonDoc::Parse(const char *json, size_t len)
       return false;
 #endif
     }
-    error_ = (parser.error() == JsonParseError::Invalid)
-               ? JsonReadError::Syntax
-               : JsonReadError::Partial;
+    error_ = ((n == JSMN_ERROR_INVAL) || (n == 0)) ? JsonReadError::Syntax
+                                                      : JsonReadError::Partial;
     return false;
   }
 #else
@@ -183,7 +188,8 @@ bool JsonValue::Exists() const
 #if JSONLIB_READER_MODE != JSONLIB_READER_SPAN
   if (tok_ >= 0)
   {
-    return (doc_ != nullptr) && doc_->view_.Contains(tok_);
+    return (doc_ != nullptr) &&
+           JsonTokenContains(doc_->token_count_, tok_);
   }
 #endif
 #if JSONLIB_READER_MODE != JSONLIB_READER_TOKEN
@@ -207,7 +213,9 @@ bool JsonValue::IsObject() const
 #if JSONLIB_READER_MODE != JSONLIB_READER_SPAN
   if (tok_ >= 0)
   {
-    return doc_->view_.Type(tok_) == JSMN_OBJECT;
+    return (doc_ != nullptr) &&
+           JsonTokenContains(doc_->token_count_, tok_) &&
+           (doc_->tokens_[tok_].type == JSMN_OBJECT);
   }
 #endif
 #if JSONLIB_READER_MODE != JSONLIB_READER_TOKEN
@@ -226,7 +234,9 @@ bool JsonValue::IsArray() const
 #if JSONLIB_READER_MODE != JSONLIB_READER_SPAN
   if (tok_ >= 0)
   {
-    return doc_->view_.Type(tok_) == JSMN_ARRAY;
+    return (doc_ != nullptr) &&
+           JsonTokenContains(doc_->token_count_, tok_) &&
+           (doc_->tokens_[tok_].type == JSMN_ARRAY);
   }
 #endif
 #if JSONLIB_READER_MODE != JSONLIB_READER_TOKEN
@@ -245,7 +255,9 @@ bool JsonValue::IsString() const
 #if JSONLIB_READER_MODE != JSONLIB_READER_SPAN
   if (tok_ >= 0)
   {
-    return doc_->view_.Type(tok_) == JSMN_STRING;
+    return (doc_ != nullptr) &&
+           JsonTokenContains(doc_->token_count_, tok_) &&
+           (doc_->tokens_[tok_].type == JSMN_STRING);
   }
 #endif
 #if JSONLIB_READER_MODE != JSONLIB_READER_TOKEN
@@ -264,7 +276,9 @@ bool JsonValue::IsPrimitive() const
 #if JSONLIB_READER_MODE != JSONLIB_READER_SPAN
   if (tok_ >= 0)
   {
-    return doc_->view_.Type(tok_) == JSMN_PRIMITIVE;
+    return (doc_ != nullptr) &&
+           JsonTokenContains(doc_->token_count_, tok_) &&
+           (doc_->tokens_[tok_].type == JSMN_PRIMITIVE);
   }
 #endif
 #if JSONLIB_READER_MODE != JSONLIB_READER_TOKEN
@@ -284,7 +298,9 @@ std::string_view JsonValue::Raw() const
 #if JSONLIB_READER_MODE != JSONLIB_READER_SPAN
   if (tok_ >= 0)
   {
-    return (doc_ != nullptr) ? doc_->view_.View(tok_) : std::string_view{};
+    return (doc_ != nullptr) ? JsonTokenView(doc_->buf_, doc_->tokens_,
+                                             doc_->token_count_, tok_)
+                             : std::string_view{};
   }
 #endif
 #if JSONLIB_READER_MODE != JSONLIB_READER_TOKEN
@@ -303,8 +319,8 @@ size_t JsonValue::Count() const
     {
       return 0u;
     }
-    const int count = doc_->view_.Tok(tok_).size;
-    return (count > 0) ? (size_t)count : 0u;
+    const int count = doc_->tokens_[tok_].size;
+      return (count > 0) ? (size_t)count : 0u;
   }
 #endif
 #if JSONLIB_READER_MODE != JSONLIB_READER_TOKEN
@@ -339,6 +355,7 @@ std::optional<int32_t> JsonValue::Int() const
   return val;
 }
 
+#if !JSONLIB_NO_FLOAT
 std::optional<float> JsonValue::Float() const
 {
   if (!IsPrimitive())
@@ -352,6 +369,7 @@ std::optional<float> JsonValue::Float() const
   }
   return val;
 }
+#endif
 
 std::optional<bool> JsonValue::Bool() const
 {
@@ -381,7 +399,8 @@ JsonValue JsonValue::operator[](std::string_view key) const
 #if JSONLIB_READER_MODE != JSONLIB_READER_SPAN
   if (tok_ >= 0)
   {
-    return JsonValue(doc_, doc_->view_.Find(tok_, key));
+    return JsonValue(doc_, JsonTokenFind(doc_->buf_, doc_->tokens_,
+                                         doc_->token_count_, tok_, key));
   }
 #endif
 #if JSONLIB_READER_MODE != JSONLIB_READER_TOKEN
@@ -401,9 +420,10 @@ JsonValue JsonValue::operator[](size_t idx) const
     return JsonValue{};
   }
 #if JSONLIB_READER_MODE != JSONLIB_READER_SPAN
-  if (tok_ >= 0)
+  if ((tok_ >= 0) && (doc_ != nullptr) &&
+      JsonTokenContains(doc_->token_count_, tok_))
   {
-    const int count = doc_->view_.Tok(tok_).size;
+    const int count = doc_->tokens_[tok_].size;
     if ((count <= 0) || (idx >= (size_t)count))
     {
       return JsonValue{};
@@ -411,7 +431,7 @@ JsonValue JsonValue::operator[](size_t idx) const
     int tok = tok_ + 1;
     for (size_t i = 0u; i < idx; i++)
     {
-      tok = doc_->view_.Skip(tok);
+      tok = JsonTokenSkip(doc_->tokens_, doc_->token_count_, tok);
       if (tok < 0)
       {
         return JsonValue{};
@@ -440,9 +460,8 @@ JsonArrayCursor::JsonArrayCursor(JsonValue array) : array_(array)
 #if JSONLIB_READER_MODE != JSONLIB_READER_SPAN
   if (array_.IsArray() && (array_.tok_ >= 0) && (array_.doc_ != nullptr))
   {
-    const Token &tok = array_.doc_->view_.Tok(array_.tok_);
     next_tok_ = array_.tok_ + 1;
-    end_ = tok.end;
+    end_ = array_.doc_->tokens_[array_.tok_].end;
   }
 #endif
 #if JSONLIB_READER_MODE != JSONLIB_READER_TOKEN
@@ -466,14 +485,15 @@ bool JsonArrayCursor::Next(JsonValue &out)
     {
       return false;
     }
-    const JsonView &view = array_.doc_->view_;
-    if (!view.Contains(next_tok_) || (view.Tok(next_tok_).start >= end_))
+    const Token *toks = array_.doc_->tokens_;
+    const int count = array_.doc_->token_count_;
+    if (!JsonTokenContains(count, next_tok_) || (toks[next_tok_].start >= end_))
     {
       next_tok_ = -1;
       return false;
     }
     out = JsonValue(array_.doc_, next_tok_);
-    next_tok_ = view.Skip(next_tok_);
+    next_tok_ = JsonTokenSkip(toks, count, next_tok_);
     return true;
   }
 #endif
@@ -497,9 +517,8 @@ JsonObjectCursor::JsonObjectCursor(JsonValue object) : object_(object)
 #if JSONLIB_READER_MODE != JSONLIB_READER_SPAN
   if (object_.IsObject() && (object_.tok_ >= 0) && (object_.doc_ != nullptr))
   {
-    const Token &tok = object_.doc_->view_.Tok(object_.tok_);
     next_tok_ = object_.tok_ + 1;
-    end_ = tok.end;
+    end_ = object_.doc_->tokens_[object_.tok_].end;
   }
 #endif
 #if JSONLIB_READER_MODE != JSONLIB_READER_TOKEN
@@ -523,27 +542,30 @@ bool JsonObjectCursor::Next(std::string_view &key, JsonValue &out)
     {
       return false;
     }
-    const JsonView &view = object_.doc_->view_;
-    if (!view.Contains(next_tok_))
+    const char *buf = object_.doc_->buf_;
+    const Token *toks = object_.doc_->tokens_;
+    const int count = object_.doc_->token_count_;
+    if (!JsonTokenContains(count, next_tok_))
     {
       next_tok_ = -1;
       return false;
     }
-    const Token &key_tok = view.Tok(next_tok_);
+    const Token &key_tok = toks[next_tok_];
     if ((key_tok.type != JSMN_STRING) || (key_tok.start >= end_))
     {
       next_tok_ = -1;
       return false;
     }
     const int value_tok = next_tok_ + 1;
-    if (!view.Contains(value_tok) || (view.Tok(value_tok).start >= end_))
+    if (!JsonTokenContains(count, value_tok) ||
+        (toks[value_tok].start >= end_))
     {
       next_tok_ = -1;
       return false;
     }
-    key = view.View(next_tok_);
+    key = JsonTokenView(buf, toks, count, next_tok_);
     out = JsonValue(object_.doc_, value_tok);
-    next_tok_ = view.Skip(value_tok);
+    next_tok_ = JsonTokenSkip(toks, count, value_tok);
     return true;
   }
 #endif

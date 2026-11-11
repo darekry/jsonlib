@@ -23,6 +23,7 @@ bool JsonParseInt(std::string_view s, int32_t &out)
   return true;
 }
 
+#if !JSONLIB_NO_FLOAT
 bool JsonParseFloat(std::string_view s, float &out)
 {
   char buf[64];
@@ -42,6 +43,7 @@ bool JsonParseFloat(std::string_view s, float &out)
   out = v;
   return true;
 }
+#endif
 
 bool JsonParseBool(std::string_view s, bool &out)
 {

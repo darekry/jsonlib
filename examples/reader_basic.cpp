@@ -2,7 +2,7 @@
 //
 // Reader example: typed access with optional values and defaults.
 // Embedded notes:
-// - the token array is static (no heap, no std::vector),
+// - JsonDoc owns a static token pool (no heap, no std::vector),
 // - string values are string_view slices into the RX buffer (no copies),
 // - missing / null / wrong-type fields are handled with optional<>.
 #include "jsonlib/json.hpp"
@@ -15,20 +15,18 @@ namespace {
 constexpr char kFrame[] =
   R"({"id":1,"kind":"widget","label":"Base","count":2500,"active":true,"details":{"target":12.5,"tags":[true,null,"x"]}})";
 
-jsonlib::Token g_tokens[48];
-
 }
 
 int main()
 {
-  jsonlib::JsonParser parser;
-  if (!parser.Parse(kFrame, sizeof(kFrame) - 1u, g_tokens, 48))
+  jsonlib::JsonDoc doc;
+  if (!doc.Parse(kFrame, sizeof(kFrame) - 1u))
   {
-    std::printf("parse failed: %d\n", (int)parser.error());
+    std::printf("parse failed: %d\n", (int)doc.error());
     return 1;
   }
 
-  jsonlib::JsonView v = parser.View();
+  jsonlib::JsonValue v = doc.root();
 
   auto label = v["label"].Str();
   if (!label)
@@ -37,12 +35,16 @@ int main()
     return 2;
   }
 ///
-  const int32_t count = v["count"].Int().value_or(1000); 
+  const int32_t count = v["count"].Int().value_or(1000);
 
   const bool active = v["active"].Bool().value_or(false);
   auto details = v["details"];
 
+#if !JSONLIB_NO_FLOAT
   const float target = details["target"].Float().value_or(0.0f);
+#else
+  const float target = 0.0f;
+#endif
   const bool first_tag = v["details"]["tags"][0u].Bool().value_or(false);
 
   const auto kind = v["kind"].Str().value_or(std::string_view());

@@ -24,8 +24,9 @@ class JsonDoc;
 class JsonArrayCursor;
 class JsonObjectCursor;
 
-/* Facade over one parsed document. Token backend delegates to JsonView;
- * span backend walks the validated buffer directly. */
+/* Facade over one parsed document. Token backend walks the token pool
+ * (helpers from json_reader.hpp); span backend walks the validated
+ * buffer directly. Use JsonDoc + JsonValue + cursors - to jedyne API readera. */
 class JsonValue
 {
 public:
@@ -45,7 +46,9 @@ public:
 
   std::optional<std::string_view> Str() const;
   std::optional<int32_t> Int() const;
+#if !JSONLIB_NO_FLOAT
   std::optional<float> Float() const;
+#endif
   std::optional<bool> Bool() const;
   bool Ip(uint8_t out[4]) const;
 
@@ -129,8 +132,8 @@ private:
   friend class JsonObjectCursor;
 
 #if JSONLIB_READER_MODE != JSONLIB_READER_SPAN
-  Token tokens_[JSONLIB_TOKEN_CAP] = {};
-  JsonView view_;
+  Token tokens_[JSONLIB_TOKEN_CAP];
+  const char *buf_ = nullptr;
 #endif
 #if JSONLIB_READER_MODE != JSONLIB_READER_TOKEN
   JsonSpan root_span_{};

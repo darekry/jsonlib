@@ -1,30 +1,13 @@
 // SPDX-License-Identifier: MIT
 #include "jsonlib/json_reader.hpp"
-#include "jsonlib/config.hpp"
+
+#include <cstring>
 
 namespace jsonlib {
 
-int JsonParseTokens(const char *json, size_t len, Token *tokens, int token_cap)
-{
-  if ((json == nullptr) || (tokens == nullptr) || (token_cap <= 0) ||
-      (len == 0u))
-  {
-    return JSMN_ERROR_INVAL;
-  }
-
-  jsmn_parser parser;
-  jsmn_init(&parser);
-  return jsmn_parse(&parser, json, len, tokens, (unsigned)token_cap);
-}
-
-bool JsonTokenContains(int count, int tok)
-{
-  return (tok >= 0) && (tok < count);
-}
-
 int JsonTokenSkip(const Token *toks, int count, int tok)
 {
-  if ((toks == nullptr) || !JsonTokenContains(count, tok))
+  if ((toks == nullptr) || (tok < 0) || (tok >= count))
   {
     return -1;
   }
@@ -40,8 +23,7 @@ int JsonTokenSkip(const Token *toks, int count, int tok)
 int JsonTokenFind(const char *buf, const Token *toks, int count, int obj,
                   std::string_view key)
 {
-  if ((buf == nullptr) || (toks == nullptr) ||
-      !JsonTokenContains(count, obj) ||
+  if ((buf == nullptr) || (toks == nullptr) || (obj < 0) || (obj >= count) ||
       (toks[obj].type != JSMN_OBJECT))
   {
     return -1;
@@ -50,20 +32,31 @@ int JsonTokenFind(const char *buf, const Token *toks, int count, int obj,
   int i = obj + 1;
   for (int k = 0; k < members; k++)
   {
-    if (!JsonTokenContains(count, i) || !JsonTokenContains(count, i + 1))
+    if ((i >= count) || (i + 1 >= count))
     {
       return -1;
     }
-    if ((toks[i].type == JSMN_STRING) &&
-        (JsonTokenView(buf, toks, count, i) == key))
+    if (toks[i].type == JSMN_STRING)
     {
-      return i + 1;
+      const Token &t = toks[i];
+      const size_t len = (size_t)(t.end - t.start);
+      if ((t.start >= 0) && (t.end >= t.start) && (len == key.size()) &&
+          ((len == 0u) || (memcmp(buf + t.start, key.data(), len) == 0)))
+      {
+        return i + 1;
+      }
     }
-    i = JsonTokenSkip(toks, count, i + 1);
-    if (i < 0)
+    const int value_end = toks[i + 1].end;
+    int next = i + 2;
+    while ((next < count) && (toks[next].start < value_end))
+    {
+      next++;
+    }
+    if (next >= count)
     {
       return -1;
     }
+    i = next;
   }
   return -1;
 }
@@ -71,8 +64,7 @@ int JsonTokenFind(const char *buf, const Token *toks, int count, int obj,
 std::string_view JsonTokenView(const char *buf, const Token *toks, int count,
                                int tok)
 {
-  if ((buf == nullptr) || (toks == nullptr) ||
-      !JsonTokenContains(count, tok))
+  if ((buf == nullptr) || (toks == nullptr) || (tok < 0) || (tok >= count))
   {
     return {};
   }

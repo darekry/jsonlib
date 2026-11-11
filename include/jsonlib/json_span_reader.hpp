@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <string_view>
 
 #include "jsonlib/config.hpp"
@@ -135,7 +136,11 @@ inline bool ValidateNumber(std::string_view text)
 
 inline bool ValidatePrimitive(std::string_view text)
 {
-  if ((text == "true") || (text == "false") || (text == "null"))
+  const char *p = text.data();
+  const size_t n = text.size();
+  if (((n == 4u) && ((memcmp(p, "true", 4u) == 0) ||
+                     (memcmp(p, "null", 4u) == 0))) ||
+      ((n == 5u) && (memcmp(p, "false", 5u) == 0)))
   {
     return true;
   }

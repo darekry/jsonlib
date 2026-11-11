@@ -69,33 +69,39 @@ const char *ScanString(const char *pos, const char *end,
         return nullptr;
       }
       const char esc = *p;
-      if ((esc == '"') || (esc == '/') || (esc == '\\') || (esc == 'b') ||
-          (esc == 'f') || (esc == 'r') || (esc == 'n') || (esc == 't'))
+      switch (esc)
       {
-        p++;
-        continue;
-      }
-      if (esc != 'u')
-      {
-        err = JsonReadError::Syntax;
-        return nullptr;
-      }
-      p++;
-      for (int i = 0; i < 4; i++)
-      {
-        if (p >= end)
-        {
-          err = JsonReadError::Partial;
-          return nullptr;
-        }
-        if (!IsHexDigit(*p))
-        {
+        case '"':
+        case '/':
+        case '\\':
+        case 'b':
+        case 'f':
+        case 'r':
+        case 'n':
+        case 't':
+          p++;
+          continue;
+        case 'u':
+          p++;
+          for (int i = 0; i < 4; i++)
+          {
+            if (p >= end)
+            {
+              err = JsonReadError::Partial;
+              return nullptr;
+            }
+            if (!IsHexDigit(*p))
+            {
+              err = JsonReadError::Syntax;
+              return nullptr;
+            }
+            p++;
+          }
+          continue;
+        default:
           err = JsonReadError::Syntax;
           return nullptr;
-        }
-        p++;
       }
-      continue;
     }
     if ((unsigned char)c < 0x20u)
     {
@@ -134,7 +140,7 @@ const char *ScanValue(const char *pos, const char *end, int depth,
   }
   if ((c == '{') || (c == '['))
   {
-    if ((depth + 1) > JSONLIB_JSON_MAX_DEPTH)
+    if (depth >= JSONLIB_JSON_MAX_DEPTH)
     {
       err = JsonReadError::TooDeep;
       return nullptr;
@@ -201,11 +207,6 @@ const char *ScanValue(const char *pos, const char *end, int depth,
         if (p >= end)
         {
           err = JsonReadError::Partial;
-          return nullptr;
-        }
-        if (*p == close)
-        {
-          err = JsonReadError::Syntax;
           return nullptr;
         }
         continue;
@@ -287,52 +288,18 @@ bool FindMember(const JsonSpan &object, std::string_view key, JsonSpan &out)
   {
     return false;
   }
-  const char *end = object.end - 1;
-  const char *limit = object.end;
   const char *pos = object.begin + 1;
   JsonSpan value;
-  for (;;)
+  std::string_view found;
+  while (NextMember(object, pos, found, value))
   {
-    const char *p = SkipWhitespace(pos, end);
-    if (p >= end)
-    {
-      return false;
-    }
-    if (*p == ',')
-    {
-      ++p;
-      p = SkipWhitespace(p, end);
-      if (p >= end)
-      {
-        return false;
-      }
-    }
-    const char *key_begin = nullptr;
-    const char *key_end = nullptr;
-    JsonReadError err = JsonReadError::None;
-    const char *next = ScanString(p, end, key_begin, key_end, err);
-    if (next == nullptr)
-    {
-      return false;
-    }
-    p = SkipWhitespace(next, end);
-    if ((p >= end) || (*p != ':'))
-    {
-      return false;
-    }
-    p++;
-    next = ScanValue(p, limit, 0, value, err);
-    if (next == nullptr)
-    {
-      return false;
-    }
-    if (std::string_view(key_begin, (size_t)(key_end - key_begin)) == key)
+    if (found == key)
     {
       out = value;
       return true;
     }
-    pos = SkipWhitespace(next, end);
   }
+  return false;
 }
 
 bool FindElement(const JsonSpan &array, size_t index, JsonSpan &out)
@@ -341,41 +308,19 @@ bool FindElement(const JsonSpan &array, size_t index, JsonSpan &out)
   {
     return false;
   }
-  const char *end = array.end - 1;
-  const char *limit = array.end;
   const char *pos = array.begin + 1;
   size_t current = 0u;
   JsonSpan value;
-  for (;;)
+  while (NextElement(array, pos, value))
   {
-    const char *p = SkipWhitespace(pos, end);
-    if (p >= end)
-    {
-      return false;
-    }
-    if (*p == ',')
-    {
-      ++p;
-      p = SkipWhitespace(p, end);
-      if (p >= end)
-      {
-        return false;
-      }
-    }
-    JsonReadError err = JsonReadError::None;
-    const char *next = ScanValue(p, limit, 0, value, err);
-    if (next == nullptr)
-    {
-      return false;
-    }
     if (current == index)
     {
       out = value;
       return true;
     }
     current++;
-    pos = SkipWhitespace(next, end);
   }
+  return false;
 }
 
 bool NextElement(const JsonSpan &array, const char *&pos, JsonSpan &out)
@@ -402,7 +347,7 @@ bool NextElement(const JsonSpan &array, const char *&pos, JsonSpan &out)
       return false;
     }
   }
-  JsonReadError err = JsonReadError::None;
+  JsonReadError err;
   const char *next = ScanValue(p, limit, 0, out, err);
   if (next == nullptr)
   {
@@ -440,7 +385,7 @@ bool NextMember(const JsonSpan &object, const char *&pos, std::string_view &key,
   }
   const char *key_begin = nullptr;
   const char *key_end = nullptr;
-  JsonReadError err = JsonReadError::None;
+  JsonReadError err;
   const char *next = ScanString(p, end, key_begin, key_end, err);
   if (next == nullptr)
   {

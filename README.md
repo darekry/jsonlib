@@ -1,165 +1,108 @@
 # jsonlib
 
-Small, allocation-free C++17 JSON reader/writer built on the MIT-licensed
-[jsmn](https://github.com/zserge/jsmn) tokenizer. The library is standalone: it
-does not depend on the firmware, HAL, or RTOS
+[Polski](README.pl.md)
 
-## Scope
+**Allocation-free JSON reader/writer for embedded C++17.** Small, strict, and
+built on the MIT-licensed [jsmn](https://github.com/zserge/jsmn) tokenizer.
 
-- `jsonlib::JsonDoc` / `jsonlib::JsonValue` - allocation-free document facade
-  with a selectable backend (jsmn tokens, span scanner, or hybrid). Parsing is
-  strict: one root value, no trailing garbage, JSON number/literal grammar,
-  no raw control bytes in strings, and a container depth cap. This is the
-  only reader API.
-- `jsonlib::JsonArrayCursor` / `jsonlib::JsonObjectCursor` - allocation-free
-  iteration over arrays and objects. In span/hybrid-span mode this is the
-  only efficient traversal: indexed `operator[]` in a loop re-scans the
-  buffer (O(n^2)), cursors walk it once (O(n)).
-- `jsonlib::JsonBuilder` - bounded, zero-allocation JSON writer:
-  - `b["Key"] = value`, `.Null()`, `.Object()`, `.Array()`
-  - RAII object/array scopes
-  - constructors for `char * + size`, C arrays, `std::array<char, N>`,
-    `std::vector<char>` and `std::span<char>` (C++20)
-- Primitive helpers: `JsonParseInt`, `JsonParseFloat` (absent with
-  `JSONLIB_NO_FLOAT=1`), `JsonParseBool`, `JsonParseIp`, `JsonCopyStr`
+## What it does
 
-## Reader modes
+- **Reads** JSON from a caller-owned buffer with strict validation: one root
+  value, no trailing bytes, full number/literal grammar, no raw control bytes
+  in strings, and a container depth cap.
+- **Writes** JSON into a fixed buffer: bounded output, automatic escaping,
+  and overflow detection.
+- **No heap, no exceptions, no RTTI.** All storage is caller-owned or static.
 
-The backend is selected in ONE place: `include/jsonlib/config.hpp`.
-Open it and uncomment a single line per section - no Makefile flags needed:
+## Who it's for
 
-| Mode | Value | Backend |
-| --- | --- | --- |
-| `JSONLIB_READER_TOKEN` | 0 | jsmn token array, `JSONLIB_TOKEN_CAP` default 320 |
-| `JSONLIB_READER_SPAN` | 1 | strict linear scanner, no token pool (20 B) |
-| `JSONLIB_READER_HYBRID` | 2 | jsmn with cap 128, span re-parse on `NOMEM` (default) |
+Firmware on MCUs (Cortex-M, AVR, and similar) and RTOS projects that need JSON
+with predictable RAM/flash usage and no dynamic allocation. Aimed at UART/DMA
+frames, commands, and telemetry payloads of a few KB.
 
-`JSONLIB_JSON_MAX_DEPTH` (default 8) caps container nesting in every mode,
-for the reader and the writer alike.
-The vendored jsmn token is compacted to 8 bytes on 32-bit targets (16-bit
-start/end/size plus a `uint8_t` type); token modes therefore accept inputs up
-to 32767 bytes. `JSON_FRAME_MAX` in this firmware is 2048, far below that.
-`JSONLIB_ASSERT(expr)` may be defined before including the headers.
+## Reader
 
+```cpp
+#include "jsonlib/json.hpp"
 
-error: the whole frame is re-parsed with the span scanner and
-`JsonDoc::backend()` reports `JsonBackend::Span` (`JsonBackend::TokenArray`
-after a token parse, `JsonBackend::None` before a successful parse).
+jsonlib::JsonDoc doc;
+if (!doc.Parse(rx, rx_len))
+{
+    report(doc.error()); // your error path; Syntax, Partial, NoMemory, TooDeep
+    return;
+}
 
-`json_doc.cpp`, `json_primitives.cpp` and `json_writer.cpp` are required in
-every mode. Backend-specific sources:
-
-- mode 0: `json_reader.cpp`, `jsmn.c`
-- mode 1: `json_span_reader.cpp` (no `json_reader.cpp`, no `jsmn.c`)
-- mode 2: all of the above
-
-`make -C libs/jsonlib test-modes` builds and runs the unit test with all three
-modes (each in its own `build/modeN` directory).
-
-## Properties
-
-- C++17, no exceptions, no RTTI, no heap allocation.
-- Caller owns the JSON buffer and, in token mode, the `jsonlib::Token` array
-  (`JsonDoc` keeps it as a member).
-- Token storage size is bounded by `jsmn` semantics: one token per JSON value,
-  key, object and array. Each compact token is 8 bytes on 32-bit targets.
-- Span mode stores only offsets into the caller's buffer; the frame must stay
-  alive while a `JsonValue`/cursor is used.
-- Span mode has no input-size limit; token modes accept at most 32767 bytes
-  because jsmn positions are signed 16-bit.
-- Integer JSON values are 32-bit. Integer literals are accepted on all
-  targets (including ARM, where `int32_t` is `long`); wider types require an
-  explicit cast.
-- `JSONLIB_NO_FLOAT` (default 0, in `config.hpp`): set to 1 to drop
-  `float`/`double` support (`Val(float/double)`, `Pair` float overloads,
-  `JsonValue::Float()`, `JsonParseFloat`). Saves ~3.5 KB flash on
-  Cortex-M/nano (no `snprintf` `%g`, no `strtof`). Number *parsing*
-  validation is unchanged; only conversion/emission is removed, so its use
-  is a compile error instead of silent bloat.
-- `JsonDoc` in token/hybrid mode holds the whole token pool by value
-  (~2.5 KB / ~1 KB on ARM): keep it `static`, never on the task stack.
-- `const char*` keys/values must be valid, NUL-terminated strings
-  (typically static literals); debug builds check them with
-  `JSONLIB_ASSERT`, release builds trust the caller.
-
-## Buffer adapters
-
-`JsonBuilder` only borrows storage; it never owns, resizes or reallocates the
-buffer. All adapters have the same lifetime rule: the buffer must outlive the
-builder and must not be resized or moved while the builder (or its output) is
-in use.
-
-- `JsonBuilder(char *buf, size_t cap)` - explicit pointer and capacity.
-- `JsonBuilder(char (&buf)[N])` - C array; capacity is `N`.
-- `JsonBuilder(std::array<char, N> &buf)` - capacity is `N`.
-- `JsonBuilder(std::vector<char> &buf)` - capacity is `buf.size()`; call
-  `resize()` before constructing the builder. The builder does not shrink or
-  grow the vector; use `b.len()` for the JSON length.
-- `JsonBuilder(std::span<char> buf)` (C++20) - non-owning view; same ownership
-  rules as the raw pointer constructor. A temporary span such as
-  `JsonBuilder b{std::span<char>(tx)}` is fine as long as `tx` outlives `b`.
-
-## Examples
-
-Embedded-oriented examples are in `examples/`:
-
-Reader:
-- `reader_basic.cpp` - typed access, optional values, defaults, nested
-  objects and array indexing.
-- `reader_embedded_rx.cpp` - length-delimited UART/DMA buffer without a null
-  terminator, static token pool, `NoMemory` handling.
-- `reader_iterate.cpp` - allocation-free iteration over arrays of records and
-  objects, including `null` values.
-
-Writer:
-- `writer_basic.cpp` - nested response object with RAII object/array scopes.
-- `writer_manual.cpp` - the same document written with explicit
-  `BeginArray()`/`EndArray()` calls on the builder instead of an array scope.
-- `writer_escape.cpp` - quoting and escaping of strings and control bytes.
-- `writer_overflow.cpp` - bounded TX buffer failure; partial output must not
-  be sent.
-- `writer_cpp_buffers.cpp` - `std::array`, pre-sized `std::vector` and C array
-  adapters.
-- `writer_span.cpp` (C++20) - temporary `std::span<char>` adapter.
-
-Build and run them with:
-
-```sh
-make -C libs/jsonlib examples              # C++17 examples
-make -C libs/jsonlib check-examples
-make -C libs/jsonlib examples-cxx20        # std::span example
-make -C libs/jsonlib check-examples-cxx20
+jsonlib::JsonValue root = doc.root();
+const int32_t id = root["id"].Int().value_or(0);
+const auto kind = root["kind"].Str().value_or(std::string_view{});
 ```
 
-`make -C libs/jsonlib test` builds and runs the unit test and all C++17
-examples. The span example requires a C++20 compiler. The examples use
-`printf` only for host-side demonstration; in firmware replace it with the
-platform log/UART output.
+Accessors return `std::optional`, so missing fields, `null`, and type
+mismatches share one defaulting path. Iterate arrays and objects with
+`JsonArrayCursor` and `JsonObjectCursor`.
 
-## Integration
+## Writer
 
-Add the include paths and compile the library sources:
+```cpp
+#include "jsonlib/json.hpp"
 
-```sh
-g++ -std=c++17 \
-    -Ilibs/jsonlib/include -Ilibs/jsonlib/third_party/jsmn \
-    -c libs/jsonlib/src/json_doc.cpp libs/jsonlib/src/json_primitives.cpp \
-       libs/jsonlib/src/json_reader.cpp libs/jsonlib/src/json_span_reader.cpp \
-       libs/jsonlib/src/json_writer.cpp
-gcc -std=c17 \
-    -Ilibs/jsonlib/include -Ilibs/jsonlib/third_party/jsmn \
-    -c libs/jsonlib/src/jsmn.c
+char tx[256];
+jsonlib::JsonBuilder b(tx, sizeof tx);
+{
+    auto root = b.Object();
+    root["kind"] = "report";
+    root["id"] = 1U;
+    {
+        auto data = root["data"].Object();
+        data["count"] = 12500;
+        data["active"] = false;
+    }
+}
+if (!b.ok())
+{
+    return; // buffer too small: send nothing
+}
+send_frame(tx, b.len());
 ```
 
-For mode 1 (span only) drop `json_reader.cpp` and `jsmn.c`; for mode 0 drop
-`json_span_reader.cpp`. Keep the defines identical across all objects.
+## Examples are the documentation
 
-Or build the static library and run the standalone test:
+`examples/` contains complete, self-documenting programs for the advanced
+cases:
+
+- **Reader**: `reader_basic.cpp` (typed access and defaults),
+  `reader_embedded_rx.cpp` (length-delimited UART/DMA buffer, static token
+  pool, `NoMemory`), `reader_iterate.cpp` (allocation-free cursors).
+- **Writer**: `writer_basic.cpp` (RAII scopes), `writer_manual.cpp` (explicit
+  `BeginArray()`/`EndArray()`), `writer_escape.cpp` (escaping),
+  `writer_overflow.cpp` (overflow handling), `writer_cpp_buffers.cpp`
+  (`std::array`, `std::vector`, C array), `writer_span.cpp` (C++20
+  `std::span`).
 
 ```sh
-make -C libs/jsonlib
-make -C libs/jsonlib test
+make test            # unit tests + all C++17 examples
+make examples-cxx20  # std::span example (C++20)
 ```
 
-Set `JSONLIB_ASSERT(expr)` before including the library headers if assertions
-are required. The default is a no-op, matching embedded release builds.
+## Configuration
+
+Edit `include/jsonlib/config.hpp`; no build flags are needed.
+
+- Reader backend: `TOKEN` (token pool, fast random access, 8 B/token),
+  `SPAN` (20 B state, sequential cursor traversal, no input limit), or
+  `HYBRID` (default; token fast path with span fallback).
+- `JSONLIB_JSON_MAX_DEPTH` (default 8), `JSONLIB_TOKEN_CAP` (token/hybrid),
+  and `JSONLIB_NO_FLOAT` (drops float support, saving ~3.5 KB flash).
+- In `TOKEN`/`HYBRID` mode `JsonDoc` contains the token pool; keep it
+  `static`, never on the task stack.
+
+## Build and integrate
+
+`make` produces `build/libjsonlib.a`. To integrate manually, add `include/`
+and `third_party/jsmn/` to the include path and compile `src/json_doc.cpp`,
+`src/json_primitives.cpp`, and `src/json_writer.cpp`, plus the backend sources
+selected in `config.hpp`.
+
+## License
+
+MIT. See [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

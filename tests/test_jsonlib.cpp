@@ -483,9 +483,21 @@ std::string MakeCatalogFrame(int entries)
 
 void TestFrames2k4k()
 {
-  // Ramka ~2.4 KB (32 wpisy, ~361 tokenow): miesci sie w cap TOKENA.
-  std::string f2 = MakeCatalogFrame(32);
+  // Ramka dopasowana do capa: TOKEN 320 -> 28 wpisow / ~2.1 KB,
+  // HYBRID 128 -> 10 wpisow / ~0.8 KB, SPAN -> 32 wpisy / ~2.4 KB.
+  // Limit 41 wpisow utrzymuje ramke ponizej 3 KB przy wiekszych capach.
+#if JSONLIB_READER_MODE == JSONLIB_READER_SPAN
+  constexpr int kSmall = 32;
+#else
+  constexpr int kCapEntries = (JSONLIB_TOKEN_CAP - 9) / 11;
+  constexpr int kSmall = (kCapEntries > 41) ? 41 : kCapEntries;
+#endif
+  std::string f2 = MakeCatalogFrame(kSmall);
+#if JSONLIB_READER_MODE == JSONLIB_READER_SPAN
   assert((f2.size() > 2048u) && (f2.size() < 3072u));
+#else
+  assert((f2.size() > 512u) && (f2.size() < 3072u));
+#endif
 
   JsonDoc d2;
   assert(d2.Parse(f2.data(), f2.size()));
@@ -497,7 +509,7 @@ void TestFrames2k4k()
 #endif
   {
     JsonValue entries = d2.root()["entries"];
-    assert(entries.IsArray() && (entries.Count() == 32u));
+    assert(entries.IsArray() && (entries.Count() == (size_t)kSmall));
     size_t n = 0u;
     JsonArrayCursor cursor(entries);
     JsonValue item;
@@ -507,9 +519,9 @@ void TestFrames2k4k()
       assert(item["count"].Int().value_or(-1) == 60);
       n++;
     }
-    assert(n == 32u);
-    assert(entries[31u]["group"].Str().value() == "general");
-    assert(!entries[32u].Exists());
+    assert(n == (size_t)kSmall);
+    assert(entries[(size_t)kSmall - 1u]["group"].Str().value() == "general");
+    assert(!entries[(size_t)kSmall].Exists());
   }
 
   // Ramka ~4.7 KB (64 wpisy, ~713 tokenow): powyzej capa TOKENA.
@@ -540,7 +552,18 @@ void TestFrames2k4k()
 
 void TestRoundTrip4k()
 {
-  // TX ~3.5 KB w statycznym buforze + re-parse (sciezka RX).
+  // TX w statycznym buforze + re-parse (sciezka RX). W TOKEN liczba
+  // wpisow jest dobrana do JSONLIB_TOKEN_CAP.
+#if JSONLIB_READER_MODE == JSONLIB_READER_TOKEN
+#if JSONLIB_NO_FLOAT
+  constexpr int kCapEntries = (JSONLIB_TOKEN_CAP - 9) / 7;
+#else
+  constexpr int kCapEntries = (JSONLIB_TOKEN_CAP - 9) / 9;
+#endif
+  constexpr int kEntries = (kCapEntries < 48) ? kCapEntries : 48;
+#else
+  constexpr int kEntries = 48;
+#endif
   static char tx[4096];
   {
     jsonlib::JsonBuilder b(tx, sizeof(tx));
@@ -550,7 +573,7 @@ void TestRoundTrip4k()
       root["seq"] = 12345;
       {
         auto arr = root["entries"].Array();
-        for (int i = 0; i < 48; i++)
+        for (int i = 0; i < kEntries; i++)
         {
           auto o = arr.Object();
           o["name"] = "sensor-013";
@@ -564,14 +587,19 @@ void TestRoundTrip4k()
       root["note"].Null();
     }
     assert(b.ok());
-    assert((b.len() > 2048u) && (b.len() < sizeof(tx)));
+#if JSONLIB_READER_MODE == JSONLIB_READER_TOKEN
+    assert(b.len() > 512u);
+#else
+    assert(b.len() > 2048u);
+#endif
+    assert(b.len() < sizeof(tx));
   }
 
   JsonDoc doc;
   assert(doc.Parse(tx, strlen(tx)));
   JsonValue entries = doc.root()["entries"];
-  assert(entries.IsArray() && (entries.Count() == 48u));
-  assert(entries[47u]["name"].Str().value() == "sensor-013");
+  assert(entries.IsArray() && (entries.Count() == (size_t)kEntries));
+  assert(entries[(size_t)kEntries - 1u]["name"].Str().value() == "sensor-013");
   assert(doc.root()["seq"].Int().value_or(-1) == 12345);
 }
 

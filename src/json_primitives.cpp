@@ -3,7 +3,6 @@
 #include "jsonlib/config.hpp"
 
 #include <cerrno>
-#include <charconv>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -12,14 +11,42 @@ namespace jsonlib {
 
 bool JsonParseInt(std::string_view s, int32_t &out)
 {
-  int32_t v = 0;
-  const char *last = s.data() + s.size();
-  auto [ptr, errc] = std::from_chars(s.data(), last, v, 10);
-  if ((errc != std::errc{}) || (ptr != last))
+  if (s.empty())
   {
     return false;
   }
-  out = v;
+  const bool neg = (s[0] == '-');
+  const uint32_t limit = neg ? 2147483648u : 2147483647u;
+  const uint32_t q = limit / 10u;
+  const uint32_t r = limit % 10u;
+  size_t i = neg ? 1u : 0u;
+  uint32_t v = 0u;
+  for (; i < s.size(); i++)
+  {
+    const char c = s[i];
+    if ((c < '0') || (c > '9'))
+    {
+      return false;
+    }
+    const uint32_t d = (uint32_t)(c - '0');
+    if ((v > q) || ((v == q) && (d > r)))
+    {
+      return false;
+    }
+    v = (v * 10u) + d;
+  }
+  if (i == (neg ? 1u : 0u))
+  {
+    return false;
+  }
+  if (neg)
+  {
+    out = (v == 2147483648u) ? (-2147483647 - 1) : -(int32_t)v;
+  }
+  else
+  {
+    out = (int32_t)v;
+  }
   return true;
 }
 
@@ -47,12 +74,12 @@ bool JsonParseFloat(std::string_view s, float &out)
 
 bool JsonParseBool(std::string_view s, bool &out)
 {
-  if (s == "true")
+  if ((s.size() == 4u) && (memcmp(s.data(), "true", 4u) == 0))
   {
     out = true;
     return true;
   }
-  if (s == "false")
+  if ((s.size() == 5u) && (memcmp(s.data(), "false", 5u) == 0))
   {
     out = false;
     return true;
@@ -62,19 +89,32 @@ bool JsonParseBool(std::string_view s, bool &out)
 
 bool JsonParseIp(std::string_view s, uint8_t out[4])
 {
+  uint8_t ip[4];
   size_t i = 0u;
-  uint8_t ip[4] = { 0u, 0u, 0u, 0u };
   for (int part = 0; part < 4; part++)
   {
+    const size_t begin = i;
+    bool neg = false;
+    if ((i < s.size()) && (s[i] == '-'))
+    {
+      neg = true;
+      i++;
+    }
+    const size_t digits = i;
     int val = 0;
-    auto [p, ec] = std::from_chars(s.data() + i, s.data() + s.size(), val);
-    if ((ec != std::errc{}) || ((p - (s.data() + i)) > 3) || (val < 0) ||
-        (val > 255))
+    while ((i < s.size()) && (s[i] >= '0') && (s[i] <= '9') &&
+           ((i - begin) < 3u))
+    {
+      val = (val * 10) + (s[i] - '0');
+      i++;
+    }
+    if ((i == digits) ||
+        ((i < s.size()) && (s[i] >= '0') && (s[i] <= '9')) ||
+        (val > 255) || (neg && (val != 0)))
     {
       return false;
     }
     ip[part] = (uint8_t)val;
-    i = (size_t)(p - s.data());
     if (part < 3)
     {
       if ((i >= s.size()) || (s[i] != '.'))

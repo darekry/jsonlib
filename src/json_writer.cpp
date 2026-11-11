@@ -2,18 +2,26 @@
 #include "jsonlib/json_writer.hpp"
 #include "jsonlib/config.hpp"
 
-#include <charconv>
 #include <cstdio>
 #include <cstring>
 
 namespace jsonlib {
 
-JsonBuilder::JsonBuilder(char *buf, size_t cap)
+namespace {
+
+char *FormatU32(char *end, uint32_t val)
 {
-  Reset(buf, cap);
+  do
+  {
+    *--end = (char)('0' + (val % 10u));
+    val /= 10u;
+  } while (val != 0u);
+  return end;
 }
 
-void JsonBuilder::Reset(char *buf, size_t cap)
+}
+
+JsonBuilder::JsonBuilder(char *buf, size_t cap)
 {
   buf_ = buf;
   cap_ = cap;
@@ -21,10 +29,6 @@ void JsonBuilder::Reset(char *buf, size_t cap)
   ok_ = false;
   depth_ = 0u;
   pending_key_ = false;
-  for (size_t i = 0u; i < kMaxDepth; i++)
-  {
-    st_[i] = 0u;
-  }
   if ((buf_ == nullptr) || (cap_ == 0u))
   {
     buf_ = nullptr;
@@ -91,15 +95,7 @@ void JsonBuilder::AfterValue()
   {
     return;
   }
-  if (pending_key_)
-  {
-    pending_key_ = false;
-    if (depth_ > 0u)
-    {
-      st_[depth_ - 1u] &= (uint8_t)~kFirst;
-    }
-    return;
-  }
+  pending_key_ = false;
   if (depth_ > 0u)
   {
     st_[depth_ - 1u] &= (uint8_t)~kFirst;
@@ -142,14 +138,29 @@ void JsonBuilder::AppendRaw(const char *p, size_t n)
 void JsonBuilder::AppendQuoted(std::string_view s)
 {
   static constexpr char kHex[] = "0123456789ABCDEF";
+  const char *p = s.data();
+  const size_t n = s.size();
   AppendChar('"');
   if (!ok_)
   {
     return;
   }
-  for (size_t i = 0; ok_ && (i < s.size()); i++)
+  size_t i = 0u;
+  while (ok_ && (i < n))
   {
-    char c = s.data()[i];
+    const char c = p[i];
+    if ((c != '"') && (c != '\\') && ((unsigned char)c >= 0x20u))
+    {
+      size_t j = i + 1u;
+      while ((j < n) && (p[j] != '"') && (p[j] != '\\') &&
+             ((unsigned char)p[j] >= 0x20u))
+      {
+        j++;
+      }
+      AppendRaw(p + i, j - i);
+      i = j;
+      continue;
+    }
     switch (c)
     {
       case '"':  AppendRaw("\\\"", 2u); break;
@@ -160,27 +171,23 @@ void JsonBuilder::AppendQuoted(std::string_view s)
       case '\b': AppendRaw("\\b", 2u); break;
       case '\f': AppendRaw("\\f", 2u); break;
       default:
-        if ((c >= 0x00) && (c < 0x20))
-        {
-          char esc[6] = { '\\', 'u', '0', '0', '0', '0' };
-          esc[4] = kHex[(c >> 4) & 0x0F];
-          esc[5] = kHex[c & 0x0F];
-          AppendRaw(esc, sizeof(esc));
-        }
-        else
-        {
-          AppendChar(c);
-        }
+      {
+        char esc[6] = { '\\', 'u', '0', '0', '0', '0' };
+        esc[4] = kHex[(c >> 4) & 0x0F];
+        esc[5] = kHex[c & 0x0F];
+        AppendRaw(esc, sizeof(esc));
         break;
+      }
     }
+    i++;
   }
   AppendChar('"');
 }
 
-JsonBuilder &JsonBuilder::BeginObject()
+JsonBuilder &JsonBuilder::Open(uint8_t type, char bracket)
 {
-  bool had_key = pending_key_;
-  uint8_t parent = depth_;
+  const bool had_key = pending_key_;
+  const uint8_t parent = depth_;
   BeforeValue();
   if (!ok_)
   {
@@ -191,12 +198,12 @@ JsonBuilder &JsonBuilder::BeginObject()
     ok_ = false;
     return *this;
   }
-  AppendChar('{');
+  AppendChar(bracket);
   if (!ok_)
   {
     return *this;
   }
-  st_[depth_] = (uint8_t)('O' | kFirst);
+  st_[depth_] = (uint8_t)(type | kFirst);
   depth_++;
   if (had_key)
   {
@@ -207,74 +214,40 @@ JsonBuilder &JsonBuilder::BeginObject()
     }
   }
   return *this;
+}
+
+JsonBuilder &JsonBuilder::Close(uint8_t type, char bracket)
+{
+  if (!ok_ || (depth_ == 0u) || ((st_[depth_ - 1u] & kTypeMask) != type) ||
+      pending_key_)
+  {
+    ok_ = false;
+    return *this;
+  }
+  depth_--;
+  AppendChar(bracket);
+  AfterValue();
+  return *this;
+}
+
+JsonBuilder &JsonBuilder::BeginObject()
+{
+  return Open('O', '{');
 }
 
 JsonBuilder &JsonBuilder::EndObject()
 {
-  if (!ok_ || (depth_ == 0u) || ((st_[depth_ - 1u] & kTypeMask) != 'O') ||
-      pending_key_)
-  {
-    ok_ = false;
-    return *this;
-  }
-  depth_--;
-  AppendChar('}');
-  if (!ok_)
-  {
-    return *this;
-  }
-  AfterValue();
-  return *this;
+  return Close('O', '}');
 }
 
 JsonBuilder &JsonBuilder::BeginArray()
 {
-  bool had_key = pending_key_;
-  uint8_t parent = depth_;
-  BeforeValue();
-  if (!ok_)
-  {
-    return *this;
-  }
-  if (depth_ >= kMaxDepth)
-  {
-    ok_ = false;
-    return *this;
-  }
-  AppendChar('[');
-  if (!ok_)
-  {
-    return *this;
-  }
-  st_[depth_] = (uint8_t)('A' | kFirst);
-  depth_++;
-  if (had_key)
-  {
-    pending_key_ = false;
-    if (parent > 0u)
-    {
-      st_[parent - 1u] &= (uint8_t)~kFirst;
-    }
-  }
-  return *this;
+  return Open('A', '[');
 }
 
 JsonBuilder &JsonBuilder::EndArray()
 {
-  if (!ok_ || (depth_ == 0u) || ((st_[depth_ - 1u] & kTypeMask) != 'A') ||
-      pending_key_)
-  {
-    ok_ = false;
-    return *this;
-  }
-  depth_--;
-  AppendChar(']');
-  if (!ok_)
-  {
-    return *this;
-  }
-  AfterValue();
-  return *this;
+  return Close('A', ']');
 }
 
 JsonBuilder &JsonBuilder::Key(std::string_view key)
@@ -312,10 +285,6 @@ JsonBuilder &JsonBuilder::Val(std::string_view val)
     return *this;
   }
   AppendQuoted(val);
-  if (!ok_)
-  {
-    return *this;
-  }
   AfterValue();
   return *this;
 }
@@ -333,18 +302,15 @@ JsonBuilder &JsonBuilder::Val(int32_t val)
   {
     return *this;
   }
-  char tmp[12];
-  auto res = std::to_chars(tmp, tmp + sizeof(tmp), val);
-  if (res.ec != std::errc{})
+  char tmp[11];
+  char *end = tmp + sizeof(tmp);
+  const uint32_t mag = (val < 0) ? (0u - (uint32_t)val) : (uint32_t)val;
+  char *begin = FormatU32(end, mag);
+  if (val < 0)
   {
-    ok_ = false;
-    return *this;
+    *--begin = '-';
   }
-  AppendRaw(tmp, (size_t)(res.ptr - tmp));
-  if (!ok_)
-  {
-    return *this;
-  }
+  AppendRaw(begin, (size_t)(end - begin));
   AfterValue();
   return *this;
 }
@@ -356,18 +322,10 @@ JsonBuilder &JsonBuilder::Val(uint32_t val)
   {
     return *this;
   }
-  char tmp[11];
-  auto res = std::to_chars(tmp, tmp + sizeof(tmp), val);
-  if (res.ec != std::errc{})
-  {
-    ok_ = false;
-    return *this;
-  }
-  AppendRaw(tmp, (size_t)(res.ptr - tmp));
-  if (!ok_)
-  {
-    return *this;
-  }
+  char tmp[10];
+  char *end = tmp + sizeof(tmp);
+  char *begin = FormatU32(end, val);
+  AppendRaw(begin, (size_t)(end - begin));
   AfterValue();
   return *this;
 }
@@ -380,10 +338,6 @@ JsonBuilder &JsonBuilder::Val(bool val)
     return *this;
   }
   AppendRaw(val ? "true" : "false", val ? 4u : 5u);
-  if (!ok_)
-  {
-    return *this;
-  }
   AfterValue();
   return *this;
 }
@@ -405,10 +359,6 @@ JsonBuilder &JsonBuilder::Val(float val)
     return *this;
   }
   AppendRaw(tmp, (size_t)n);
-  if (!ok_)
-  {
-    return *this;
-  }
   AfterValue();
   return *this;
 }
@@ -428,10 +378,6 @@ JsonBuilder &JsonBuilder::Val(double val)
     return *this;
   }
   AppendRaw(tmp, (size_t)n);
-  if (!ok_)
-  {
-    return *this;
-  }
   AfterValue();
   return *this;
 }
@@ -445,10 +391,6 @@ JsonBuilder &JsonBuilder::Null()
     return *this;
   }
   AppendRaw("null", 4u);
-  if (!ok_)
-  {
-    return *this;
-  }
   AfterValue();
   return *this;
 }

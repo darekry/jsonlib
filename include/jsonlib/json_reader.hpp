@@ -23,15 +23,8 @@ namespace jsonlib {
 
 using Token = jsmntok_t;
 
-/* Niskopoziomowy backend tokenowy (uzytek wewnetrzny JsonDoc).
- * Zwraca liczbe tokenow albo ujemny kod bledu jsmn (JSMN_ERROR_*).
- * Pusty/niepelny input: 0 albo JSMN_ERROR_PART - oba oznaczaja blad,
- * JsonDoc mapuje je na JsonReadError::Syntax/Partial. */
-int JsonParseTokens(const char *json, size_t len, Token *tokens, int token_cap);
-
 /* Nawigacja po puli tokenow (bez alokacji, bez wyjatkow).
  * Nieprawidlowy indeks = -1. Funkcje same sprawdzaja zakresy. */
-bool JsonTokenContains(int count, int tok);
 int JsonTokenSkip(const Token *toks, int count, int tok);
 int JsonTokenFind(const char *buf, const Token *toks, int count, int obj,
                   std::string_view key);

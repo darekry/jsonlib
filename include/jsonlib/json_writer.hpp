@@ -173,10 +173,11 @@ public:
   const char *c_str() const;
 
 private:
-  void Reset(char *buf, size_t cap);
   void BeforeKey();
   void BeforeValue();
   void AfterValue();
+  JsonBuilder &Open(uint8_t type, char bracket);
+  JsonBuilder &Close(uint8_t type, char bracket);
   void AppendChar(char c);
   void AppendRaw(const char *p, size_t n);
   void AppendQuoted(std::string_view s);

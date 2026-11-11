@@ -99,7 +99,7 @@ bool JsonDoc::Parse(const char *json, size_t len)
 
 #if JSONLIB_READER_MODE != JSONLIB_READER_SPAN
   {
-    jsmn_parser parser = { 0u, 0u, -1 };
+    jsmn_parser parser = { 0u, 0u, -1, 0 };
     const int n = jsmn_parse(&parser, json, len, tokens_, JSONLIB_TOKEN_CAP);
     if (n > 0)
     {

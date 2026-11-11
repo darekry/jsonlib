@@ -92,6 +92,7 @@ typedef struct jsmn_parser {
   unsigned int pos;     /* offset in the JSON string */
   unsigned int toknext; /* next token to allocate */
   int toksuper;         /* superior token node, e.g. parent object or array */
+  int open;             /* jsonlib fork*/
 } jsmn_parser;
 
 /**
@@ -322,6 +323,7 @@ JSMN_API int jsmn_parse(jsmn_parser *parser, const char *js, const size_t len,
       token->type = (uint8_t)(c == '{' ? JSMN_OBJECT : JSMN_ARRAY);
       token->start = (int16_t)parser->pos;
       parser->toksuper = parser->toknext - 1;
+      parser->open++;
       break;
     case '}':
     case ']':
@@ -341,6 +343,7 @@ JSMN_API int jsmn_parse(jsmn_parser *parser, const char *js, const size_t len,
           }
           token->end = (int16_t)(parser->pos + 1);
           parser->toksuper = token->parent;
+          parser->open--;
           break;
         }
         if (token->parent == -1) {
@@ -354,12 +357,13 @@ JSMN_API int jsmn_parse(jsmn_parser *parser, const char *js, const size_t len,
 #else
       for (i = parser->toknext - 1; i >= 0; i--) {
         token = &tokens[i];
-        if (token->start != -1 && token->end == -1) {
+        if (token->end == -1) {
           if (token->type != type) {
             return JSMN_ERROR_INVAL;
           }
           parser->toksuper = -1;
           token->end = (int16_t)(parser->pos + 1);
+          parser->open--;
           break;
         }
       }
@@ -369,7 +373,7 @@ JSMN_API int jsmn_parse(jsmn_parser *parser, const char *js, const size_t len,
       }
       for (; i >= 0; i--) {
         token = &tokens[i];
-        if (token->start != -1 && token->end == -1) {
+        if (token->end == -1) {
           parser->toksuper = i;
           break;
         }
@@ -458,13 +462,9 @@ JSMN_API int jsmn_parse(jsmn_parser *parser, const char *js, const size_t len,
     }
   }
 
-  if (tokens != NULL) {
-    for (i = parser->toknext - 1; i >= 0; i--) {
-      /* Unmatched opened object or array */
-      if (tokens[i].start != -1 && tokens[i].end == -1) {
-        return JSMN_ERROR_PART;
-      }
-    }
+  /* jsonlib fork: */
+  if ((tokens != NULL) && (parser->open != 0)) {
+    return JSMN_ERROR_PART;
   }
 
   return count;
@@ -478,6 +478,7 @@ JSMN_API void jsmn_init(jsmn_parser *parser) {
   parser->pos = 0;
   parser->toknext = 0;
   parser->toksuper = -1;
+  parser->open = 0;
 }
 
 #endif /* JSMN_HEADER */
